@@ -252,6 +252,9 @@ Route::middleware(['auth'])->group(function () {
             Route::get('/create', [ClientPortalController::class, 'createAsn'])->name('asn.create');
             Route::post('/', [ClientPortalController::class, 'storeAsn'])->name('asn.store');
             Route::get('/{id}', [ClientPortalController::class, 'showAsn'])->name('asn.show'); 
+            
+            // --- NUEVA RUTA: Impresión de etiquetas de bulto ---
+            Route::get('/{id}/label', [ClientPortalController::class, 'printAsnLabels'])->name('asn.label');
         });
 
         // --- PEDIDOS CLIENTE ---

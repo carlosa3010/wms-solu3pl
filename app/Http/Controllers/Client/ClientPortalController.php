@@ -21,6 +21,7 @@ use App\Models\Country;
 use App\Models\State;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 class ClientPortalController extends Controller
 {
@@ -36,7 +37,11 @@ class ClientPortalController extends Controller
 
         $productsCount = Product::where('client_id', $clientId)->count();
         $pendingRmas = RMA::where('client_id', $clientId)->where('status', 'pending')->count();
-        $activeAsns = ASN::where('client_id', $clientId)->whereIn('status', ['draft', 'sent'])->count();
+        
+        // Contar ASNs que están en camino o procesándose
+        $activeAsns = ASN::where('client_id', $clientId)
+            ->whereIn('status', ['sent', 'processing', 'receiving'])
+            ->count();
         
         $corteCuenta = ServiceCharge::where('client_id', $clientId)
             ->whereMonth('created_at', now()->month)
@@ -49,13 +54,12 @@ class ClientPortalController extends Controller
     }
 
     /**
-     * Catálogo: Gestión de SKUs con dimensiones sincronizadas (_cm) y stock total.
+     * Catálogo: Gestión de SKUs con dimensiones y stock total.
      */
     public function catalog()
     {
         $clientId = auth()->user()->client_id;
         
-        // Obtenemos los productos con la suma de stock para validaciones de eliminación
         $skus = Product::where('client_id', $clientId)
             ->with('category')
             ->withSum('inventory as total_stock', 'quantity')
@@ -68,7 +72,7 @@ class ClientPortalController extends Controller
     }
 
     /**
-     * Guardar nuevo producto (SKU).
+     * Registro de nuevo producto.
      */
     public function storeSku(Request $request)
     {
@@ -94,11 +98,11 @@ class ClientPortalController extends Controller
 
         Product::create($validated);
 
-        return redirect()->route('client.catalog')->with('success', 'Producto registrado correctamente con sus especificaciones físicas.');
+        return redirect()->route('client.catalog')->with('success', 'Producto registrado correctamente.');
     }
 
     /**
-     * Actualizar producto (SKU) existente.
+     * Actualizar SKU.
      */
     public function updateSku(Request $request, $id)
     {
@@ -127,7 +131,7 @@ class ClientPortalController extends Controller
     }
 
     /**
-     * Eliminar SKU (Solo si no tiene stock físico).
+     * Eliminar SKU si no tiene stock.
      */
     public function destroySku($id)
     {
@@ -147,7 +151,7 @@ class ClientPortalController extends Controller
     }
 
     /**
-     * Stock Actual: Inventario por ubicación.
+     * Inventario por ubicación.
      */
     public function stock()
     {
@@ -160,7 +164,7 @@ class ClientPortalController extends Controller
     }
 
     /**
-     * Exportar Inventario a PDF.
+     * Exportar Stock PDF.
      */
     public function exportStock()
     {
@@ -178,7 +182,7 @@ class ClientPortalController extends Controller
     }
 
     /**
-     * Pedidos: Gestión de Órdenes de Salida.
+     * Listado de Pedidos de Salida.
      */
     public function ordersIndex()
     {
@@ -187,10 +191,12 @@ class ClientPortalController extends Controller
         return view('client.orders_index', compact('orders'));
     }
 
+    /**
+     * Creación de Pedido.
+     */
     public function createOrder()
     {
         $clientId = auth()->user()->client_id;
-        
         $products = Product::where('client_id', $clientId)
             ->withSum('inventory as stock_available', 'quantity')
             ->get()
@@ -203,6 +209,9 @@ class ClientPortalController extends Controller
         return view('client.orders_create', compact('products', 'shippingMethods', 'countries'));
     }
 
+    /**
+     * Guardar Pedido.
+     */
     public function storeOrder(Request $request)
     {
         $clientId = auth()->user()->client_id;
@@ -217,7 +226,7 @@ class ClientPortalController extends Controller
         DB::transaction(function () use ($request, $clientId) {
             $order = Order::create([
                 'client_id' => $clientId,
-                'order_number' => 'ORD-' . strtoupper(uniqid()),
+                'order_number' => 'ORD-' . strtoupper(Str::random(6)),
                 'reference_number' => $request->reference_number,
                 'customer_name' => $request->customer_name,
                 'customer_address' => $request->customer_address,
@@ -245,49 +254,8 @@ class ClientPortalController extends Controller
         return redirect()->route('client.orders.index')->with('success', 'Pedido creado exitosamente.');
     }
 
-    public function editOrder($id)
-    {
-        $clientId = auth()->user()->client_id;
-        $order = Order::where('client_id', $clientId)->where('status', 'pending')->with('items')->findOrFail($id);
-        
-        $currentProductIds = $order->items->pluck('product_id')->toArray();
-        $products = Product::where('client_id', $clientId)
-            ->withSum('inventory as stock_available', 'quantity')
-            ->get()
-            ->filter(fn($p) => $p->stock_available > 0 || in_array($p->id, $currentProductIds))
-            ->sortBy('sku')->values();
-
-        $shippingMethods = ShippingMethod::where('is_active', true)->get();
-        $countries = Country::orderBy('name')->get();
-
-        return view('client.orders_edit', compact('order', 'products', 'shippingMethods', 'countries'));
-    }
-
-    public function updateOrder(Request $request, $id)
-    {
-        $clientId = auth()->user()->client_id;
-        $order = Order::where('client_id', $clientId)->where('status', 'pending')->findOrFail($id);
-
-        $request->validate(['customer_name' => 'required|string|max:255', 'items' => 'required|array|min:1']);
-
-        DB::transaction(function () use ($request, $order) {
-            $order->update($request->except('items'));
-            $order->items()->delete();
-            foreach ($request->items as $item) {
-                OrderItem::create([
-                    'order_id' => $order->id,
-                    'product_id' => $item['product_id'],
-                    'quantity' => $item['quantity'],
-                    'price' => 0,
-                ]);
-            }
-        });
-
-        return redirect()->route('client.orders.index')->with('success', 'Pedido actualizado.');
-    }
-
     /**
-     * Exportar Pedido a PDF.
+     * Exportar Pedido PDF.
      */
     public function exportOrder($id)
     {
@@ -303,7 +271,7 @@ class ClientPortalController extends Controller
     }
 
     /**
-     * Obtener estados por país (Servicio AJAX).
+     * AJAX: Estados por País.
      */
     public function getStatesByCountry($countryId)
     {
@@ -321,6 +289,9 @@ class ClientPortalController extends Controller
         return view('client.asn_index', compact('asns'));
     }
 
+    /**
+     * ASN: Formulario de Creación.
+     */
     public function createAsn()
     {
         $clientId = auth()->user()->client_id;
@@ -328,35 +299,69 @@ class ClientPortalController extends Controller
         return view('client.asn_create', compact('products'));
     }
 
+    /**
+     * Almacena el ASN generado por el cliente.
+     * MEJORADO: Generación automática de ID y estado 'sent'.
+     */
     public function storeAsn(Request $request)
     {
         $clientId = auth()->user()->client_id;
-        $request->validate(['reference_number' => 'required', 'items' => 'required|array']);
 
-        DB::transaction(function () use ($request, $clientId) {
-            $asn = ASN::create([
-                'client_id' => $clientId,
-                'reference_number' => $request->reference_number,
-                'expected_arrival_date' => $request->expected_arrival_date,
-                'notes' => $request->notes,
-                'status' => 'draft',
-            ]);
+        $request->validate([
+            'reference_number' => 'required|string|max:50',
+            'expected_arrival_date' => 'required|date|after_or_equal:today',
+            'total_packages' => 'required|integer|min:1',
+            'items' => 'required|array|min:1',
+            'items.*.product_id' => 'required|exists:products,id',
+            'items.*.quantity' => 'required|integer|min:1',
+        ]);
 
-            foreach ($request->items as $item) {
-                ASNItem::create([
-                    'asn_id' => $asn->id,
-                    'product_id' => $item['product_id'],
-                    'expected_quantity' => $item['quantity'],
-                    'received_quantity' => 0,
+        try {
+            $asn = DB::transaction(function () use ($request, $clientId) {
+                // GENERACIÓN AUTOMÁTICA DE ID ÚNICO
+                $asnNumber = 'ASN-' . strtoupper(Str::random(8));
+
+                $asn = ASN::create([
+                    'client_id' => $clientId,
+                    'asn_number' => $asnNumber,
+                    'reference_number' => $request->reference_number, // Requiere ALTER TABLE
+                    'expected_arrival_date' => $request->expected_arrival_date,
+                    'total_packages' => $request->total_packages, // Requiere ALTER TABLE
+                    'notes' => $request->notes,
+                    'status' => 'sent', // Visible inmediatamente para el almacén
                 ]);
-            }
-        });
 
-        return redirect()->route('client.asn.index')->with('success', 'ASN creado correctamente.');
+                foreach ($request->items as $item) {
+                    ASNItem::create([
+                        'asn_id' => $asn->id,
+                        'product_id' => $item['product_id'],
+                        'expected_quantity' => $item['quantity'],
+                        'received_quantity' => 0,
+                    ]);
+                }
+                return $asn;
+            });
+
+            return redirect()->route('client.asn.index')->with('success', "ASN {$asn->asn_number} creado correctamente. Procede a imprimir las etiquetas.");
+
+        } catch (\Exception $e) {
+            return back()->withInput()->withErrors(['error' => 'Error al procesar el ASN: ' . $e->getMessage()]);
+        }
     }
 
     /**
-     * RMA: Devoluciones.
+     * Vista de etiquetas de bulto para el ASN.
+     */
+    public function printAsnLabels($id)
+    {
+        $clientId = auth()->user()->client_id;
+        $asn = ASN::where('id', $id)->where('client_id', $clientId)->with(['client', 'items.product'])->firstOrFail();
+        
+        return view('client.asn_label', compact('asn'));
+    }
+
+    /**
+     * RMA: Gestión de Devoluciones.
      */
     public function rmaIndex()
     {
@@ -379,26 +384,30 @@ class ClientPortalController extends Controller
         if ($rma->status !== 'waiting_client') return redirect()->back();
 
         $request->validate(['action' => 'required|in:approve,reject']);
+        $status = ($request->action === 'approve') ? 'approved' : 'disputed';
+        
         $rma->update([
-            'status' => ($request->action === 'approve' ? 'approved' : 'disputed'),
-            'client_notes' => 'Acción de cliente: ' . now()
+            'status' => $status,
+            'client_notes' => 'Acción de cliente el ' . now()
         ]);
 
         return redirect()->back()->with('success', 'Respuesta enviada.');
     }
 
     /**
-     * Facturación y Soporte.
+     * Facturación y Reporte de Pagos.
      */
     public function billing()
     {
         $clientId = auth()->user()->client_id;
         $invoices = Invoice::where('client_id', $clientId)->latest()->get();
         $paymentMethodsRaw = PaymentMethod::where('is_active', true)->get();
+        
         $paymentMethods = [];
         foreach($paymentMethodsRaw as $method) {
             $paymentMethods[$method->id] = ['name' => $method->name, 'details' => $method->details];
         }
+        
         return view('client.billing_index', compact('invoices', 'paymentMethods'));
     }
 
@@ -408,12 +417,13 @@ class ClientPortalController extends Controller
         $request->validate(['payment_method' => 'required', 'amount' => 'required', 'proof_file' => 'required|file']);
         
         $path = $request->file('proof_file')->store('payments', 'public');
-        
+        $methodName = PaymentMethod::find($request->payment_method)?->name ?? 'Desconocido';
+
         DB::table('payments')->insert([
             'client_id' => $clientId,
             'amount' => $request->amount,
-            'payment_method' => PaymentMethod::find($request->payment_method)?->name ?? 'N/A', 
-            'payment_date' => $request->payment_date,
+            'payment_method' => $methodName, 
+            'payment_date' => $request->payment_date ?? now(),
             'reference' => $request->reference,
             'proof_path' => $path,
             'status' => 'pending',
@@ -424,6 +434,9 @@ class ClientPortalController extends Controller
         return redirect()->route('client.billing.index')->with('success', 'Pago reportado.');
     }
 
+    /**
+     * Descargar Pre-factura (Servicios acumulados).
+     */
     public function downloadPreInvoice()
     {
         $clientId = auth()->user()->client_id;
