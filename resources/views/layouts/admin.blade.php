@@ -210,6 +210,10 @@
                             <i class="fa-solid fa-file-invoice-dollar w-5 text-center"></i>
                             <span class="text-sm font-medium">Facturación</span>
                         </a>
+                        <a href="{{ route('admin.billing.payments.index') }}" class="flex items-center gap-3 px-3 py-2 rounded-lg transition-all {{ request()->routeIs('admin.billing.payments.index') ? 'bg-custom-primary text-white' : 'text-slate-300 hover:bg-white/10 hover:text-white' }}">
+                            <i class="fa-solid fa-money-bill-transfer w-5 text-center"></i>
+                            <span class="text-sm font-medium">Pagos Recibidos</span>
+                        </a>
                         <a href="{{ route('admin.billing.rates') }}" class="flex items-center gap-3 px-3 py-2 rounded-lg transition-all {{ request()->routeIs('admin.billing.rates') ? 'bg-custom-primary text-white' : 'text-slate-300 hover:bg-white/10 hover:text-white' }}">
                             <i class="fa-solid fa-hand-holding-dollar w-5 text-center"></i>
                             <span class="text-sm font-medium">Tarifas de Servicios</span>
@@ -231,7 +235,6 @@
                             <span class="text-sm font-medium">Sucursales y Bodegas</span>
                         </a>
                         
-                        <!-- FIX: Enlace correcto para el mapa -->
                         <a href="{{ route('admin.inventory.map', ['view' => 'map']) }}" class="flex items-center gap-3 px-3 py-2 rounded-lg transition-all {{ request()->routeIs('admin.inventory.map') ? 'bg-custom-primary text-white' : 'text-slate-300 hover:bg-white/10 hover:text-white' }}">
                             <i class="fa-solid fa-map-location-dot w-5 text-center"></i>
                             <span class="text-sm font-medium">Mapa de Bodegas</span>
@@ -247,7 +250,7 @@
 
             <!-- SECCIÓN: CONFIGURACIÓN -->
             @if($canSee('settings'))
-                <div x-data="{ open: {{ request()->routeIs('admin.bintypes.*') || request()->routeIs('admin.settings.*') || request()->routeIs('admin.users.*') ? 'true' : 'false' }} }" class="mb-1">
+                <div x-data="{ open: {{ request()->routeIs('admin.bintypes.*') || request()->routeIs('admin.settings.*') || request()->routeIs('admin.users.*') || request()->routeIs('admin.payment_methods.*') || request()->routeIs('admin.shipping_methods.*') ? 'true' : 'false' }} }" class="mb-1">
                     <button @click="open = !open" class="w-full flex justify-between items-center px-3 py-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest hover:text-white transition-colors focus:outline-none">
                         <span>Configuración</span>
                         <i class="fa-solid fa-chevron-down text-[10px] transition-transform duration-200" :class="open ? '' : '-rotate-90'"></i>
@@ -260,6 +263,16 @@
                         <a href="{{ route('admin.settings.index') }}" class="flex items-center gap-3 px-3 py-2 rounded-lg transition-all {{ request()->routeIs('admin.settings.*') ? 'bg-custom-primary text-white' : 'text-slate-300 hover:bg-white/10 hover:text-white' }}">
                             <i class="fa-solid fa-gears w-5 text-center"></i>
                             <span class="text-sm font-medium">Marca & Sistema</span>
+                        </a>
+                        <!-- Módulo de Métodos de Pago -->
+                        <a href="{{ route('admin.payment_methods.index') }}" class="flex items-center gap-3 px-3 py-2 rounded-lg transition-all {{ request()->routeIs('admin.payment_methods.*') ? 'bg-custom-primary text-white' : 'text-slate-300 hover:bg-white/10 hover:text-white' }}">
+                            <i class="fa-solid fa-credit-card w-5 text-center"></i>
+                            <span class="text-sm font-medium">Métodos de Pago</span>
+                        </a>
+                        <!-- NUEVO: Módulo de Métodos de Envío -->
+                        <a href="{{ route('admin.shipping_methods.index') }}" class="flex items-center gap-3 px-3 py-2 rounded-lg transition-all {{ request()->routeIs('admin.shipping_methods.*') ? 'bg-custom-primary text-white' : 'text-slate-300 hover:bg-white/10 hover:text-white' }}">
+                            <i class="fa-solid fa-truck-fast w-5 text-center"></i>
+                            <span class="text-sm font-medium">Métodos de Envío</span>
                         </a>
                         <a href="{{ route('admin.users.index') }}" class="flex items-center gap-3 px-3 py-2 rounded-lg transition-all {{ request()->routeIs('admin.users.*') ? 'bg-custom-primary text-white' : 'text-slate-300 hover:bg-white/10 hover:text-white' }}">
                             <i class="fa-solid fa-users-gear w-5 text-center"></i>

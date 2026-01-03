@@ -12,27 +12,24 @@ class Product extends Model
 
     /**
      * Atributos asignables de forma masiva.
-     * @var array
+     * Se han incluido los campos de dimensiones con sufijo _cm para coincidir con la DB.
      */
     protected $fillable = [
-        'client_id',      // Dueño del producto
-        'category_id',    // Categoría logística (opcional)
-        'sku',            // Stock Keeping Unit (Código único)
-        'name',           // Nombre descriptivo
-        'description',    // Detalles adicionales
-        'barcode',        // Código de barras (EAN/UPC)
-        'weight_kg',      // Peso para cálculos de transporte
-        'length_cm',      // Largo para inteligencia de bines
-        'width_cm',       // Ancho para inteligencia de bines
-        'height_cm',      // Alto para inteligencia de bines
-        'image_url',      // Foto del producto
-        'is_active'       // Estado en el catálogo
+        'client_id',
+        'category_id',
+        'sku',
+        'name',
+        'description',
+        'barcode',
+        'weight_kg',
+        'length_cm',
+        'width_cm',
+        'height_cm',
+        'image_path',
+        'min_stock_level',
+        'is_active'
     ];
 
-    /**
-     * Conversión de tipos.
-     * @var array
-     */
     protected $casts = [
         'is_active' => 'boolean',
         'weight_kg' => 'float',
@@ -41,57 +38,23 @@ class Product extends Model
         'height_cm' => 'float',
     ];
 
-    /**
-     * Relación: El producto pertenece a un Cliente (Dueño de la carga).
-     */
     public function client()
     {
         return $this->belongsTo(Client::class);
     }
 
-    /**
-     * Relación: El producto pertenece a una Categoría logística.
-     */
     public function category()
     {
         return $this->belongsTo(Category::class);
     }
 
-    /**
-     * Relación: Existencias físicas en diferentes bines/bodegas.
-     */
     public function inventory()
     {
         return $this->hasMany(Inventory::class);
     }
 
     /**
-     * Relación: Historial de movimientos en el Kardex.
-     */
-    public function movements()
-    {
-        return $this->hasMany(StockMovement::class);
-    }
-
-    /**
-     * Relación: Participación en ítems de pedidos (Salidas).
-     */
-    public function orderItems()
-    {
-        return $this->hasMany(OrderItem::class);
-    }
-
-    /**
-     * Relación: Participación en ítems de recepciones (Entradas).
-     */
-    public function asnItems()
-    {
-        return $this->hasMany(ASNItem::class);
-    }
-
-    /**
-     * Helper: Calcula el volumen cúbico del producto (cm3).
-     * Vital para la lógica de asignación automática de bines.
+     * Accesor para calcular el volumen.
      */
     public function getVolumeAttribute()
     {
@@ -99,19 +62,10 @@ class Product extends Model
     }
 
     /**
-     * Helper: Obtiene el stock total sumando todas las ubicaciones.
+     * Accesor para el stock total (usado en la vista de catálogo).
      */
     public function getTotalStockAttribute()
     {
         return $this->inventory()->sum('quantity');
-    }
-
-    /**
-     * Scope para buscar por SKU o Nombre.
-     */
-    public function scopeSearch($query, $term)
-    {
-        return $query->where('sku', 'like', "%{$term}%")
-                     ->orWhere('name', 'like', "%{$term}%");
     }
 }

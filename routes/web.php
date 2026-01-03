@@ -19,8 +19,9 @@ use App\Http\Controllers\TransferController;
 use App\Http\Controllers\BillingController;
 use App\Http\Controllers\RMAController;
 use App\Http\Controllers\UserController;
+use App\Http\Controllers\PaymentMethodController;
+use App\Http\Controllers\ShippingMethodController;
 use App\Http\Controllers\Client\ClientPortalController;
-// Nueva importación
 use App\Http\Controllers\Auth\PasswordController;
 
 /*
@@ -106,7 +107,6 @@ Route::middleware(['auth'])->group(function () {
             Route::get('/get-sources', [InventoryController::class, 'getSources'])->name('admin.inventory.get_sources');
             Route::get('/get-bins', [InventoryController::class, 'getBins'])->name('admin.inventory.get_bins');
             
-            // Esta ruta carga el mapa/infraestructura
             Route::get('/map', [WarehouseManagementController::class, 'index'])->name('admin.inventory.map');
         });
 
@@ -173,6 +173,12 @@ Route::middleware(['auth'])->group(function () {
         // Módulo: Finanzas
         Route::prefix('billing')->group(function () {
             Route::get('/', [BillingController::class, 'index'])->name('admin.billing.index');
+            
+            // --- GESTIÓN DE PAGOS RECIBIDOS ---
+            Route::get('/payments', [BillingController::class, 'paymentsIndex'])->name('admin.billing.payments.index');
+            Route::post('/payments/{id}/approve', [BillingController::class, 'approvePayment'])->name('admin.billing.payments.approve');
+            Route::post('/payments/{id}/reject', [BillingController::class, 'rejectPayment'])->name('admin.billing.payments.reject');
+            
             Route::get('/rates', [BillingController::class, 'rates'])->name('admin.billing.rates');
             Route::post('/rates', [BillingController::class, 'storeProfile'])->name('admin.billing.rates.store');
             Route::post('/assign-agreement', [BillingController::class, 'assignAgreement'])->name('admin.billing.assign_agreement');
@@ -185,16 +191,28 @@ Route::middleware(['auth'])->group(function () {
         Route::prefix('settings')->group(function () {
             Route::get('/', [SettingController::class, 'index'])->name('admin.settings.index');
             Route::post('/', [SettingController::class, 'update'])->name('admin.settings.update');
-            
-            // NUEVA RUTA: Prueba de Correo
             Route::post('/test-mail', [SettingController::class, 'sendTestMail'])->name('admin.settings.test_mail');
+
+            // --- MÉTODOS DE PAGO ---
+            Route::get('/payment-methods', [PaymentMethodController::class, 'index'])->name('admin.payment_methods.index');
+            Route::post('/payment-methods', [PaymentMethodController::class, 'store'])->name('admin.payment_methods.store');
+            Route::put('/payment-methods/{id}', [PaymentMethodController::class, 'update'])->name('admin.payment_methods.update');
+            Route::patch('/payment-methods/{id}/toggle', [PaymentMethodController::class, 'toggle'])->name('admin.payment_methods.toggle');
+            Route::delete('/payment-methods/{id}', [PaymentMethodController::class, 'destroy'])->name('admin.payment_methods.destroy');
+
+            // --- MÉTODOS DE ENVÍO ---
+            Route::get('/shipping-methods', [ShippingMethodController::class, 'index'])->name('admin.shipping_methods.index');
+            Route::post('/shipping-methods', [ShippingMethodController::class, 'store'])->name('admin.shipping_methods.store');
+            Route::put('/shipping-methods/{id}', [ShippingMethodController::class, 'update'])->name('admin.shipping_methods.update');
+            Route::patch('/shipping-methods/{id}/toggle', [ShippingMethodController::class, 'toggle'])->name('admin.shipping_methods.toggle');
+            Route::delete('/shipping-methods/{id}', [ShippingMethodController::class, 'destroy'])->name('admin.shipping_methods.destroy');
 
             Route::get('/bins', [BinTypeController::class, 'index'])->name('admin.bintypes.index');
             Route::post('/bins', [BinTypeController::class, 'store'])->name('admin.bintypes.store');
             Route::delete('/bins/{id}', [BinTypeController::class, 'destroy'])->name('admin.bintypes.destroy');
         });
 
-        // Módulo: Usuarios (Control de Roles y Permisos)
+        // Módulo: Usuarios
         Route::prefix('users')->group(function () {
             Route::get('/', [UserController::class, 'index'])->name('admin.users.index');
             Route::post('/', [UserController::class, 'store'])->name('admin.users.store');
@@ -210,38 +228,60 @@ Route::middleware(['auth'])->group(function () {
     Route::prefix('portal')->name('client.')->group(function () {
         Route::get('/dashboard', [ClientPortalController::class, 'dashboard'])->name('portal');
 
+        // --- CATÁLOGO CLIENTE ---
         Route::prefix('catalog')->group(function () {
             Route::get('/', [ClientPortalController::class, 'catalog'])->name('catalog');
             Route::post('/store', [ClientPortalController::class, 'storeSku'])->name('catalog.store');
+            Route::put('/update/{id}', [ClientPortalController::class, 'updateSku'])->name('catalog.update'); // NUEVA: Actualizar SKU
+            Route::delete('/destroy/{id}', [ClientPortalController::class, 'destroySku'])->name('catalog.destroy'); // NUEVA: Eliminar SKU
         });
 
-        Route::get('/stock', [ClientPortalController::class, 'stock'])->name('stock');
+        // --- INVENTARIO CLIENTE ---
+        Route::prefix('stock')->group(function () {
+            Route::get('/', [ClientPortalController::class, 'stock'])->name('stock');
+            Route::get('/export', [ClientPortalController::class, 'exportStock'])->name('stock.export'); // Exportar Stock PDF
+        });
 
+        // --- ASN CLIENTE ---
         Route::prefix('asn')->group(function () {
             Route::get('/', [ClientPortalController::class, 'asnIndex'])->name('asn.index');
             Route::get('/create', [ClientPortalController::class, 'createAsn'])->name('asn.create');
             Route::post('/', [ClientPortalController::class, 'storeAsn'])->name('asn.store');
-            Route::get('/{id}', [ClientPortalController::class, 'showAsn'])->name('asn.show');
+            Route::get('/{id}', [ClientPortalController::class, 'showAsn'])->name('asn.show'); 
         });
 
+        // --- PEDIDOS CLIENTE ---
         Route::prefix('orders')->group(function () {
             Route::get('/', [ClientPortalController::class, 'ordersIndex'])->name('orders.index');
             Route::get('/create', [ClientPortalController::class, 'createOrder'])->name('orders.create');
             Route::post('/', [ClientPortalController::class, 'storeOrder'])->name('orders.store');
+            Route::get('/{id}', [ClientPortalController::class, 'showOrder'])->name('orders.show');
+            Route::get('/{id}/edit', [ClientPortalController::class, 'editOrder'])->name('orders.edit');
+            Route::put('/{id}', [ClientPortalController::class, 'updateOrder'])->name('orders.update');
+            Route::get('/{id}/export', [ClientPortalController::class, 'exportOrder'])->name('orders.export'); // Exportar Pedido PDF
         });
 
+        // --- RMA CLIENTE ---
         Route::prefix('rma')->group(function () {
             Route::get('/', [ClientPortalController::class, 'rmaIndex'])->name('rma');
-            Route::get('/{id}', [ClientPortalController::class, 'showRma'])->name('rma.show');
-            Route::patch('/{id}/status', [ClientPortalController::class, 'updateRmaStatus'])->name('rma.status');
+            Route::get('/{id}', [ClientPortalController::class, 'rmaShow'])->name('rma.show');
+            Route::post('/{id}/action', [ClientPortalController::class, 'rmaAction'])->name('rma.action');
         });
 
+        // --- FACTURACIÓN CLIENTE ---
         Route::prefix('billing')->group(function () {
             Route::get('/', [ClientPortalController::class, 'billing'])->name('billing.index');
+            Route::post('/payment', [ClientPortalController::class, 'storePayment'])->name('billing.store_payment');
             Route::get('/download-preinvoice', [ClientPortalController::class, 'downloadPreInvoice'])->name('billing.download');
         });
+
+        // --- GEOGRAFÍA (AJAX) ---
+        Route::get('/states/{countryId}', [ClientPortalController::class, 'getStatesByCountry'])->name('states.get');
+
+        // --- ESTÁTICOS ---
+        Route::get('/api-docs', [ClientPortalController::class, 'api'])->name('api');
+        Route::get('/support', [ClientPortalController::class, 'support'])->name('support');
     });
 
-    // --- OTROS PANELES ---
     Route::get('/warehouse/station', [DashboardController::class, 'warehouseStation'])->name('warehouse.station');
 });

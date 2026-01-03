@@ -8,10 +8,11 @@ use App\Models\BillingProfile;
 use App\Models\Invoice;
 use App\Models\ServiceCharge;
 use App\Models\ClientBillingAgreement;
+use App\Models\Payment; // Importante: Modelo de Pagos
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\Mail; // Importante para enviar correos
-use App\Mail\InvoiceGenerated; // Mailable para facturas
+use Illuminate\Support\Facades\Mail;
+use App\Mail\InvoiceGenerated;
 use Illuminate\Support\Facades\Log;
 
 class BillingController extends Controller
@@ -102,12 +103,12 @@ class BillingController extends Controller
         }])->findOrFail($clientId);
 
         $data = [
-            'client'   => $client,
-            'items'    => $client->serviceCharges,
-            'total'    => $client->accumulated_charges, // Atributo dinámico del modelo Client
-            'title'    => 'REPORTE DE SERVICIOS ACUMULADOS',
-            'is_draft' => true,
-            'date'     => now()->format('d/m/Y')
+            'client'    => $client,
+            'items'     => $client->serviceCharges,
+            'total'     => $client->accumulated_charges, // Atributo dinámico del modelo Client
+            'title'     => 'REPORTE DE SERVICIOS ACUMULADOS',
+            'is_draft'  => true,
+            'date'      => now()->format('d/m/Y')
         ];
 
         // Retorna la vista optimizada para impresión (o PDF si la librería está instalada)
@@ -123,11 +124,11 @@ class BillingController extends Controller
         $invoice = Invoice::with(['client'])->findOrFail($invoiceId);
         
         $data = [
-            'client'   => $invoice->client,
-            'invoice'  => $invoice,
-            'title'    => 'FACTURA COMERCIAL: ' . $invoice->invoice_number,
-            'is_draft' => false,
-            'date'     => $invoice->created_at->format('d/m/Y')
+            'client'    => $invoice->client,
+            'invoice'   => $invoice,
+            'title'     => 'FACTURA COMERCIAL: ' . $invoice->invoice_number,
+            'is_draft'  => false,
+            'date'      => $invoice->created_at->format('d/m/Y')
         ];
 
         return view('admin.billing.pdf_template', $data);
@@ -169,8 +170,7 @@ class BillingController extends Controller
             }
         });
 
-        // 4. Lógica de generación de facturas y envío de correo (Descomentada y activada)
-        // Esto normalmente iría en un proceso de cierre de mes, pero lo incluimos aquí como ejemplo o cierre diario.
+        // 4. Lógica de generación de facturas y envío de correo
         $clientsToBill = Client::whereHas('serviceCharges', function($q) {
             $q->where('is_invoiced', false);
         })->get();
@@ -181,7 +181,6 @@ class BillingController extends Controller
             $total = $pendingCharges->sum('amount');
 
             if ($total > 0) {
-                // Usamos una transacción separada por cliente para no afectar a otros si uno falla
                 try {
                     DB::transaction(function () use ($client, $total, $pendingCharges) {
                         // Crear Factura
@@ -214,5 +213,54 @@ class BillingController extends Controller
         }
 
         return back()->with('success', 'Cargos diarios calculados y facturas generadas correctamente. Las notificaciones han sido enviadas.');
+    }
+
+    // --- NUEVOS MÉTODOS PARA GESTIÓN DE PAGOS ---
+
+    /**
+     * Listado de pagos reportados por clientes
+     */
+    public function paymentsIndex(Request $request)
+    {
+        $query = Payment::with('client')->latest();
+
+        if ($request->has('status') && $request->status !== '') {
+            $query->where('status', $request->status);
+        }
+
+        $payments = $query->get();
+
+        return view('admin.billing.payments_index', compact('payments'));
+    }
+
+    /**
+     * Aprobar Pago
+     */
+    public function approvePayment($id)
+    {
+        $payment = Payment::findOrFail($id);
+        
+        // Actualizar estado del pago
+        $payment->status = 'approved';
+        $payment->approved_at = now();
+        $payment->save();
+
+        // Opcional: Actualizar el estado de las facturas relacionadas si aplica
+        // o crear un abono en cuenta. Esto depende de tu lógica de negocio exacta.
+
+        return redirect()->back()->with('success', 'Pago acreditado correctamente.');
+    }
+
+    /**
+     * Rechazar Pago
+     */
+    public function rejectPayment($id)
+    {
+        $payment = Payment::findOrFail($id);
+        
+        $payment->status = 'rejected';
+        $payment->save();
+
+        return redirect()->back()->with('success', 'Pago rechazado.');
     }
 }

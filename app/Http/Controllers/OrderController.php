@@ -9,18 +9,23 @@ use App\Models\OrderAllocation;
 use App\Models\Inventory;
 use App\Models\Client;
 use App\Models\Product;
-use App\Models\Branch; 
+use App\Models\Branch;
+use App\Models\Country;
+use App\Models\State;
+use App\Models\Transfer; // Asumido: Modelo para traslados
+use App\Models\TransferItem; // Asumido: Items del traslado
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\DB;
 
 class OrderController extends Controller
 {
     /**
-     * Muestra el listado principal de órdenes.
+     * Listado principal de órdenes.
      */
     public function index(Request $request)
     {
         $query = Order::with(['client', 'items', 'branch']);
+        
         if ($request->filled('search')) {
             $search = $request->search;
             $query->where(function($q) use ($search) {
@@ -29,53 +34,220 @@ class OrderController extends Controller
                   ->orWhere('customer_id_number', 'like', "%{$search}%");
             });
         }
+        
         $orders = $query->orderBy('created_at', 'desc')->paginate(15);
         return view('admin.operations.orders.index', compact('orders'));
     }
 
     /**
-     * ACCIÓN MANUAL: Permite forzar o reintentar la asignación de stock.
+     * Almacena la orden y ejecuta la INTELIGENCIA DE ASIGNACIÓN Y CONSOLIDACIÓN.
      */
-    public function executeAllocation($id)
+    public function store(Request $request)
     {
-        $order = Order::with(['items.product', 'branch'])->findOrFail($id);
-        
-        if (!$order->branch_id) {
-            return back()->withErrors(['error' => 'La orden no tiene una sede asignada.']);
+        $request->validate([
+            'client_id' => 'required|exists:clients,id',
+            'order_number' => 'required|unique:orders,order_number',
+            'customer_name' => 'required|string',
+            'state' => 'required|string',
+            'country' => 'required|string',
+            'items' => 'required|array|min:1',
+            'items.*.product_id' => 'required|exists:products,id',
+            'items.*.qty' => 'required|integer|min:1',
+        ]);
+
+        // 1. Determinar la mejor sede (por geografía) y verificar si requiere traslados
+        $assignmentPlan = $this->calculateAssignmentPlan($request->state, $request->country, $request->items);
+
+        if (!$assignmentPlan['success']) {
+            return back()->withInput()->withErrors(['error' => $assignmentPlan['message']]);
         }
 
         try {
-            $this->performStockAllocation($order);
-            return back()->with('success', 'Stock re-asignado correctamente en la sede: ' . $order->branch->name);
+            $order = DB::transaction(function () use ($request, $assignmentPlan) {
+                // 2. Crear la orden
+                $order = Order::create([
+                    'order_number' => $request->order_number,
+                    'client_id' => $request->client_id,
+                    'branch_id' => $assignmentPlan['branch_id'],
+                    'customer_name' => $request->customer_name,
+                    'customer_id_number' => $request->customer_id_number,
+                    'customer_email' => $request->customer_email,
+                    'shipping_address' => $request->shipping_address,
+                    'city' => $request->city,
+                    'state' => $request->state,
+                    'country' => $request->country,
+                    'phone' => $request->phone,
+                    'shipping_method' => $request->shipping_method,
+                    'status' => $assignmentPlan['requires_transfer'] ? 'waiting_transfer' : 'pending'
+                ]);
+
+                foreach ($request->items as $itemData) {
+                    OrderItem::create([
+                        'order_id' => $order->id,
+                        'product_id' => $itemData['product_id'],
+                        'requested_quantity' => $itemData['qty'],
+                    ]);
+                }
+
+                // 3. Si requiere consolidación, crear los traslados automáticos
+                if ($assignmentPlan['requires_transfer']) {
+                    $this->createConsolidationTransfers($order, $assignmentPlan['transfer_plan']);
+                }
+
+                return $order;
+            });
+
+            // 4. Reservar stock solo de lo que ya está disponible en la sede destino
+            if (!$assignmentPlan['requires_transfer']) {
+                $this->performStockAllocation($order);
+                $msg = 'Pedido asignado y stock reservado automáticamente.';
+            } else {
+                $msg = 'Pedido en espera. Se han generado traslados automáticos para consolidar stock en ' . $order->branch->name;
+            }
+
+            return redirect()->route('admin.orders.index')->with('success', $msg);
+
         } catch (\Exception $e) {
-            return back()->withErrors(['error' => 'Fallo en la asignación: ' . $e->getMessage()]);
+            return back()->withInput()->withErrors(['error' => 'Error al procesar: ' . $e->getMessage()]);
         }
     }
 
     /**
-     * CEREBRO DE PICKING: Busca stock real y lo reserva.
+     * Calcula la mejor sede y planea traslados si es necesario.
+     */
+    private function calculateAssignmentPlan($destState, $destCountry, $requestedItems)
+    {
+        $branches = Branch::where('is_active', true)->get();
+        $bestBranch = null;
+        $maxGeoScore = -1;
+
+        // Fase 1: Encontrar la mejor sede geográfica (Target)
+        foreach ($branches as $branch) {
+            $score = $this->calculateGeoScore($branch, $destState, $destCountry);
+            if ($score > $maxGeoScore) {
+                $maxGeoScore = $score;
+                $bestBranch = $branch;
+            }
+        }
+
+        if (!$bestBranch || $maxGeoScore === 0) {
+            return ['success' => false, 'message' => 'Ninguna sede cubre esta zona geográfica.'];
+        }
+
+        // Fase 2: Verificar Stock en la sede elegida y planear traslados
+        $transferPlan = [];
+        $requiresTransfer = false;
+
+        foreach ($requestedItems as $item) {
+            $productId = $item['product_id'];
+            $qtyNeeded = $item['qty'];
+
+            // Stock actual en la sede destino
+            $stockInTarget = $this->getStockInBranch($productId, $bestBranch->id);
+            
+            if ($stockInTarget < $qtyNeeded) {
+                $requiresTransfer = true;
+                $missingQty = $qtyNeeded - $stockInTarget;
+
+                // Buscar en otras sedes para cubrir el faltante
+                $otherBranches = Branch::where('id', '!=', $bestBranch->id)->where('is_active', true)->get();
+                foreach ($otherBranches as $sourceBranch) {
+                    if ($missingQty <= 0) break;
+
+                    $stockInSource = $this->getStockInBranch($productId, $sourceBranch->id);
+                    if ($stockInSource > 0) {
+                        $take = min($missingQty, $stockInSource);
+                        $transferPlan[] = [
+                            'product_id' => $productId,
+                            'from_branch_id' => $sourceBranch->id,
+                            'to_branch_id' => $bestBranch->id,
+                            'quantity' => $take
+                        ];
+                        $missingQty -= $take;
+                    }
+                }
+
+                if ($missingQty > 0) {
+                    $p = Product::find($productId);
+                    return [
+                        'success' => false, 
+                        'message' => "Stock insuficiente global para el producto: {$p->sku}. Faltan {$missingQty} unidades."
+                    ];
+                }
+            }
+        }
+
+        return [
+            'success' => true,
+            'branch_id' => $bestBranch->id,
+            'requires_transfer' => $requiresTransfer,
+            'transfer_plan' => $transferPlan
+        ];
+    }
+
+    /**
+     * Crea los registros de traslado para consolidar stock.
+     */
+    private function createConsolidationTransfers(Order $order, $plan)
+    {
+        // Agrupar plan por sede de origen para crear un traslado por sede
+        $groupedPlan = collect($plan)->groupBy('from_branch_id');
+
+        foreach ($groupedPlan as $sourceBranchId => $items) {
+            $sourceBranch = Branch::find($sourceBranchId);
+            
+            $transfer = Transfer::create([
+                'origin_branch_id' => $sourceBranchId,
+                'destination_branch_id' => $order->branch_id,
+                'transfer_number' => 'TR-' . strtoupper(Str::random(8)),
+                'status' => 'pending',
+                'notes' => "Consolidación automática para pedido #{$order->order_number}",
+                'created_by' => auth()->id() ?? 1
+            ]);
+
+            foreach ($items as $itemData) {
+                TransferItem::create([
+                    'transfer_id' => $transfer->id,
+                    'product_id' => $itemData['product_id'],
+                    'quantity' => $itemData['quantity'],
+                ]);
+                
+                // Opcional: Podrías reservar el stock en la sede de origen aquí mismo
+                // para evitar que otro pedido lo tome mientras se procesa el traslado.
+            }
+        }
+    }
+
+    private function calculateGeoScore($branch, $destState, $destCountry) {
+        if ($branch->country !== $destCountry && !in_array($destCountry, $branch->covered_countries ?? [])) return 0;
+        if ($branch->country === $destCountry && $branch->state === $destState) return 100;
+        if (in_array($destState, $branch->covered_states ?? [])) return 80;
+        if ($branch->country === $destCountry) return 50;
+        if ($branch->can_export) return 20;
+        return 5;
+    }
+
+    private function getStockInBranch($productId, $branchId) {
+        return Inventory::where('product_id', $productId)
+            ->whereHas('location.warehouse', function($q) use ($branchId) {
+                $q->where('branch_id', $branchId);
+            })->sum('quantity');
+    }
+
+    /**
+     * Ejecuta la reserva física de stock (Picking).
      */
     private function performStockAllocation(Order $order)
     {
         DB::transaction(function() use ($order) {
             foreach($order->items as $item) {
-                foreach($item->allocations as $alloc) {
-                    Inventory::where('location_id', $alloc->location_id)
-                             ->where('product_id', $item->product_id)
-                             ->increment('quantity', $alloc->quantity);
-                    $alloc->delete();
-                }
-            }
-
-            foreach($order->items as $item) {
                 $needed = $item->requested_quantity;
-                
                 $availableStock = Inventory::where('product_id', $item->product_id)
                     ->where('quantity', '>', 0)
                     ->whereHas('location.warehouse', function($q) use ($order) {
                         $q->where('branch_id', $order->branch_id);
                     })
-                    ->orderByRaw('COALESCE(created_at, id) ASC')
+                    ->orderBy('quantity', 'desc')
                     ->get();
 
                 foreach($availableStock as $stockRecord) {
@@ -94,101 +266,16 @@ class OrderController extends Controller
                 }
                 $item->update(['allocated_quantity' => ($item->requested_quantity - $needed)]);
             }
-            $order->update(['status' => 'allocated']);
         });
     }
 
-    /**
-     * Muestra el detalle de la orden.
-     */
-    public function show($id)
-    {
+    public function show($id) {
         $order = Order::with(['client', 'items.product', 'branch'])->findOrFail($id);
         return view('admin.operations.orders.show', compact('order'));
     }
 
-    /**
-     * Formulario de creación.
-     */
-    public function create()
-    {
-        $clients = Client::where('is_active', true)->orderBy('company_name')->get();
-        $nextOrderNumber = 'ORD-' . strtoupper(Str::random(6));
-        
-        // Consumimos la lista maestra de estados desde una fuente centralizada (Model Branch)
-        $states = defined('App\Models\Branch::VENEZUELA_STATES') 
-                  ? Branch::VENEZUELA_STATES 
-                  : ['Amazonas', 'Anzoátegui', 'Apure', 'Aragua', 'Barinas', 'Bolívar', 'Carabobo', 'Cojedes', 'Delta Amacuro', 'Distrito Capital', 'Falcón', 'Guárico', 'Lara', 'Mérida', 'Miranda', 'Monagas', 'Nueva Esparta', 'Portuguesa', 'Sucre', 'Táchira', 'Trujillo', 'Vargas', 'Yaracuy', 'Zulia'];
-
-        return view('admin.operations.orders.create', compact('clients', 'nextOrderNumber', 'states'));
-    }
-
-    /**
-     * Almacena la orden y ejecuta la ASIGNACIÓN AUTOMÁTICA.
-     */
-    public function store(Request $request)
-    {
-        $request->validate([
-            'client_id' => 'required|exists:clients,id',
-            'order_number' => 'required|unique:orders,order_number',
-            'customer_name' => 'required|string',
-            'customer_id_number' => 'required|string',
-            'shipping_address' => 'required|string',
-            'city' => 'required|string',
-            'state' => 'required|string',
-            'country' => 'required|string',
-            'items' => 'required|array|min:1',
-            'items.*.product_id' => 'required|exists:products,id',
-            'items.*.qty' => 'required|integer|min:1',
-        ]);
-
-        $assignedBranchId = $this->determineBestBranch($request->state, $request->country);
-
-        try {
-            $order = DB::transaction(function () use ($request, $assignedBranchId) {
-                $order = Order::create([
-                    'order_number' => $request->order_number,
-                    'client_id' => $request->client_id,
-                    'branch_id' => $assignedBranchId,
-                    'customer_name' => $request->customer_name,
-                    'customer_id_number' => $request->customer_id_number,
-                    'customer_email' => $request->customer_email,
-                    'shipping_address' => $request->shipping_address,
-                    'city' => $request->city,
-                    'state' => $request->state,
-                    'country' => $request->country,
-                    'phone' => $request->phone,
-                    'shipping_method' => $request->shipping_method,
-                    'notes' => $request->notes,
-                    'status' => 'pending'
-                ]);
-
-                foreach ($request->items as $itemData) {
-                    OrderItem::create([
-                        'order_id' => $order->id,
-                        'product_id' => $itemData['product_id'],
-                        'requested_quantity' => $itemData['qty'],
-                    ]);
-                }
-                return $order;
-            });
-
-            $this->performStockAllocation($order);
-
-            return redirect()->route('admin.orders.index')->with('success', 'Pedido registrado y stock reservado automáticamente.');
-
-        } catch (\Exception $e) {
-            return back()->withInput()->withErrors(['error' => 'Error al procesar el pedido: ' . $e->getMessage()]);
-        }
-    }
-
-    /**
-     * Anula el pedido y devuelve el stock a los bines.
-     */
-    public function destroy($id)
-    {
+    public function destroy($id) {
         $order = Order::with('items.allocations')->findOrFail($id);
-        
         DB::transaction(function() use ($order) {
             foreach($order->items as $item) {
                 foreach($item->allocations as $alloc) {
@@ -200,37 +287,6 @@ class OrderController extends Controller
             }
             $order->update(['status' => 'cancelled']);
         });
-
-        return redirect()->route('admin.orders.index')->with('success', 'Orden anulada y stock liberado correctamente.');
-    }
-
-    /**
-     * Genera la vista de Picking List.
-     */
-    public function printPickingList($id)
-    {
-        $order = Order::with(['client', 'items.product', 'items.allocations.location', 'branch'])->findOrFail($id);
-        return view('admin.operations.orders.picking_list', compact('order'));
-    }
-
-    /**
-     * INTELIGENCIA GEOGRÁFICA: Determina la sede óptima.
-     * Esta lógica consume la configuración que crearemos en el nuevo módulo.
-     */
-    private function determineBestBranch($state, $country)
-    {
-        // 1. Caso Exportación: Buscamos la primera sede activa con permiso de exportación
-        if (strtolower($country) !== 'venezuela') {
-            $exportBranch = Branch::where('can_export', true)->where('is_active', true)->first();
-            if ($exportBranch) return $exportBranch->id;
-        }
-        
-        // 2. Caso Nacional: Buscamos la sede que cubra el estado solicitado
-        $localBranch = Branch::where('is_active', true)
-                     ->whereJsonContains('covered_states', $state)
-                     ->value('id');
-
-        // 3. Fallback: Si no hay cobertura específica, asignamos la sede principal (primera activa)
-        return $localBranch ?? Branch::where('is_active', true)->first()->id;
+        return redirect()->route('admin.orders.index')->with('success', 'Orden anulada.');
     }
 }
