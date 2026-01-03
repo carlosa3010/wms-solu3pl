@@ -2,130 +2,145 @@
 
 namespace App\Http\Controllers;
 
-use Illuminate\Http\Request;
 use App\Models\Product;
 use App\Models\Client;
 use App\Models\Category;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 
 class ProductController extends Controller
 {
     /**
-     * Listado maestro de SKUs con filtros.
+     * Display a listing of the resource.
      */
     public function index(Request $request)
     {
         $query = Product::with(['client', 'category']);
 
-        // Búsqueda por SKU o Nombre
+        // Filtro por búsqueda
         if ($request->filled('search')) {
-            $query->search($request->search);
+            $search = $request->search;
+            $query->where(function($q) use ($search) {
+                $q->where('name', 'like', "%{$search}%")
+                  ->orWhere('sku', 'like', "%{$search}%")
+                  ->orWhere('barcode', 'like', "%{$search}%");
+            });
         }
 
-        // Filtro por Cliente
+        // Filtro por cliente
         if ($request->filled('client_id')) {
             $query->where('client_id', $request->client_id);
         }
 
-        $products = $query->orderBy('name')->paginate(15);
-        $clients = Client::orderBy('company_name')->get();
+        $products = $query->latest()->paginate(15);
+        
+        // Obtenemos todos los clientes ordenados por ID descendente para ver los NUEVOS primero
+        $clients = Client::orderBy('id', 'desc')->get();
 
         return view('admin.products.index', compact('products', 'clients'));
     }
 
     /**
-     * Formulario de creación de nuevo SKU.
+     * Show the form for creating a new resource.
      */
     public function create()
     {
-        $clients = Client::where('is_active', true)->orderBy('company_name')->get();
+        // Ordenamos por ID desc para que los clientes recién creados aparezcan al principio del select
+        $clients = Client::orderBy('id', 'desc')->get();
         $categories = Category::orderBy('name')->get();
-        
         return view('admin.products.create', compact('clients', 'categories'));
     }
 
     /**
-     * Almacena el producto validando las dimensiones logísticas.
+     * Store a newly created resource in storage.
      */
     public function store(Request $request)
     {
-        $validated = $request->validate([
-            'client_id'   => 'required|exists:clients,id',
-            'category_id' => 'nullable|exists:categories,id',
-            'sku'         => 'required|string|unique:products,sku|max:50',
-            'name'        => 'required|string|max:255',
-            'barcode'     => 'nullable|string|max:100',
-            'weight_kg'   => 'required|numeric|min:0',
-            'length_cm'   => 'required|numeric|min:0',
-            'width_cm'    => 'required|numeric|min:0',
-            'height_cm'   => 'required|numeric|min:0',
-            'image'       => 'nullable|image|max:2048', // Max 2MB
+        $request->validate([
+            'client_id'      => 'required|exists:clients,id',
+            'category_id'    => 'required|exists:categories,id',
+            'sku'            => 'required|unique:products,sku',
+            'name'           => 'required|string|max:255',
+            'weight_kg'      => 'nullable|numeric|min:0',
+            'length_cm'      => 'nullable|numeric|min:0',
+            'width_cm'       => 'nullable|numeric|min:0',
+            'height_cm'      => 'nullable|numeric|min:0',
+            'min_stock_level'=> 'nullable|integer|min:0',
+            'image'          => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048',
         ]);
 
-        // Procesar imagen si existe
+        // Usamos only() para asegurarnos de NO enviar 'is_active' si la columna no existe en la DB
+        $data = $request->only([
+            'client_id', 'category_id', 'sku', 'name', 'barcode', 
+            'description', 'weight_kg', 'length_cm', 'width_cm', 
+            'height_cm', 'min_stock_level'
+        ]);
+        
+        // Manejo de la imagen
         if ($request->hasFile('image')) {
-            $path = $request->file('image')->store('products', 'public');
-            $validated['image_url'] = Storage::url($path);
+            $data['image_path'] = $request->file('image')->store('products', 'public');
         }
 
-        $validated['is_active'] = true;
-
-        Product::create($validated);
+        Product::create($data);
 
         return redirect()->route('admin.products.index')
-            ->with('success', 'Producto registrado exitosamente en el catálogo maestro.');
+            ->with('success', 'Producto creado exitosamente.');
     }
 
     /**
-     * Formulario de edición.
+     * Show the form for editing the specified resource.
      */
-    public function edit($id)
+    public function edit(Product $product)
     {
-        $product = Product::findOrFail($id);
-        $clients = Client::where('is_active', true)->orderBy('company_name')->get();
+        $clients = Client::orderBy('id', 'desc')->get();
         $categories = Category::orderBy('name')->get();
-
         return view('admin.products.edit', compact('product', 'clients', 'categories'));
     }
 
     /**
-     * Actualiza los datos del SKU.
+     * Update the specified resource in storage.
      */
-    public function update(Request $request, $id)
+    public function update(Request $request, Product $product)
     {
-        $product = Product::findOrFail($id);
+        $request->validate([
+            'client_id'      => 'required|exists:clients,id',
+            'category_id'    => 'required|exists:categories,id',
+            'sku'            => 'required|unique:products,sku,' . $product->id,
+            'name'           => 'required|string|max:255',
+            'weight_kg'      => 'nullable|numeric|min:0',
+            'length_cm'      => 'nullable|numeric|min:0',
+            'width_cm'       => 'nullable|numeric|min:0',
+            'height_cm'      => 'nullable|numeric|min:0',
+            'image'          => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048',
+        ]);
 
-        $validated = $request->validate([
-            'category_id' => 'nullable|exists:categories,id',
-            'sku'         => 'required|string|max:50|unique:products,sku,' . $product->id,
-            'name'        => 'required|string|max:255',
-            'barcode'     => 'nullable|string|max:100',
-            'weight_kg'   => 'required|numeric|min:0',
-            'length_cm'   => 'required|numeric|min:0',
-            'width_cm'    => 'required|numeric|min:0',
-            'height_cm'   => 'required|numeric|min:0',
-            'image'       => 'nullable|image|max:2048',
+        $data = $request->only([
+            'client_id', 'category_id', 'sku', 'name', 'barcode', 
+            'description', 'weight_kg', 'length_cm', 'width_cm', 
+            'height_cm', 'min_stock_level'
         ]);
 
         if ($request->hasFile('image')) {
-            $path = $request->file('image')->store('products', 'public');
-            $validated['image_url'] = Storage::url($path);
+            if ($product->image_path) {
+                Storage::disk('public')->delete($product->image_path);
+            }
+            $data['image_path'] = $request->file('image')->store('products', 'public');
         }
 
-        $product->update($validated);
+        $product->update($data);
 
         return redirect()->route('admin.products.index')
-            ->with('success', 'Información del producto actualizada correctamente.');
+            ->with('success', 'Producto actualizado correctamente.');
     }
 
     /**
-     * Eliminación lógica (SoftDelete).
+     * Remove the specified resource from storage.
      */
-    public function destroy($id)
+    public function destroy(Product $product)
     {
-        $product = Product::findOrFail($id);
         $product->delete();
 
-        return back()->with('success', 'El producto ha sido retirado del catálogo activo.');
+        return redirect()->route('admin.products.index')
+            ->with('success', 'Producto eliminado.');
     }
 }
