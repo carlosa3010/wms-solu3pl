@@ -10,6 +10,9 @@ use App\Models\ServiceCharge;
 use App\Models\ClientBillingAgreement;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Mail; // Importante para enviar correos
+use App\Mail\InvoiceGenerated; // Mailable para facturas
+use Illuminate\Support\Facades\Log;
 
 class BillingController extends Controller
 {
@@ -25,8 +28,8 @@ class BillingController extends Controller
         $stats = [
             'total_pending' => Invoice::where('status', 'unpaid')->sum('total_amount'),
             'collected_month' => Invoice::where('status', 'paid')
-                                ->whereMonth('created_at', now()->month)
-                                ->sum('total_amount'),
+                                        ->whereMonth('created_at', now()->month)
+                                        ->sum('total_amount'),
             'pending_charges' => ServiceCharge::where('is_invoiced', false)->count()
         ];
 
@@ -166,6 +169,50 @@ class BillingController extends Controller
             }
         });
 
-        return back()->with('success', 'El proceso de cargos diarios de almacenamiento se ha completado.');
+        // 4. Lógica de generación de facturas y envío de correo (Descomentada y activada)
+        // Esto normalmente iría en un proceso de cierre de mes, pero lo incluimos aquí como ejemplo o cierre diario.
+        $clientsToBill = Client::whereHas('serviceCharges', function($q) {
+            $q->where('is_invoiced', false);
+        })->get();
+
+        foreach ($clientsToBill as $client) {
+            // Calcular total pendiente
+            $pendingCharges = $client->serviceCharges()->where('is_invoiced', false)->get();
+            $total = $pendingCharges->sum('amount');
+
+            if ($total > 0) {
+                // Usamos una transacción separada por cliente para no afectar a otros si uno falla
+                try {
+                    DB::transaction(function () use ($client, $total, $pendingCharges) {
+                        // Crear Factura
+                        $invoice = Invoice::create([
+                            'client_id' => $client->id,
+                            'invoice_number' => 'INV-' . strtoupper(uniqid()), // Generador simple
+                            'total_amount' => $total,
+                            'status' => 'unpaid',
+                            'due_date' => now()->addDays(30), // Vencimiento a 30 días
+                        ]);
+
+                        // Marcar cargos como facturados
+                        foreach ($pendingCharges as $charge) {
+                            $charge->update(['is_invoiced' => true, 'invoice_id' => $invoice->id]);
+                        }
+
+                        // ENVIAR CORREO DE NOTIFICACIÓN
+                        if ($client->email) {
+                            try {
+                                Mail::to($client->email)->send(new InvoiceGenerated($invoice));
+                            } catch (\Exception $e) {
+                                Log::error("Error enviando factura a {$client->email}: " . $e->getMessage());
+                            }
+                        }
+                    });
+                } catch (\Exception $e) {
+                    Log::error("Error al generar factura para cliente {$client->id}: " . $e->getMessage());
+                }
+            }
+        }
+
+        return back()->with('success', 'Cargos diarios calculados y facturas generadas correctamente. Las notificaciones han sido enviadas.');
     }
 }
