@@ -160,6 +160,10 @@ Route::middleware(['auth'])->group(function () {
             Route::get('/create', [TransferController::class, 'create'])->name('admin.transfers.create');
             Route::post('/', [TransferController::class, 'store'])->name('admin.transfers.store');
             Route::get('/{reference}/manifest', [TransferController::class, 'printManifest'])->name('admin.transfers.manifest');
+            
+            // --- NUEVAS RUTAS DE PROCESAMIENTO (Ship & Receive) ---
+            Route::post('/{id}/ship', [TransferController::class, 'ship'])->name('admin.transfers.ship');
+            Route::post('/{id}/receive', [TransferController::class, 'receive'])->name('admin.transfers.receive');
         });
 
         Route::prefix('rma')->group(function () {
@@ -232,14 +236,14 @@ Route::middleware(['auth'])->group(function () {
         Route::prefix('catalog')->group(function () {
             Route::get('/', [ClientPortalController::class, 'catalog'])->name('catalog');
             Route::post('/store', [ClientPortalController::class, 'storeSku'])->name('catalog.store');
-            Route::put('/update/{id}', [ClientPortalController::class, 'updateSku'])->name('catalog.update'); // NUEVA: Actualizar SKU
-            Route::delete('/destroy/{id}', [ClientPortalController::class, 'destroySku'])->name('catalog.destroy'); // NUEVA: Eliminar SKU
+            Route::put('/update/{id}', [ClientPortalController::class, 'updateSku'])->name('catalog.update');
+            Route::delete('/destroy/{id}', [ClientPortalController::class, 'destroySku'])->name('catalog.destroy');
         });
 
         // --- INVENTARIO CLIENTE ---
         Route::prefix('stock')->group(function () {
             Route::get('/', [ClientPortalController::class, 'stock'])->name('stock');
-            Route::get('/export', [ClientPortalController::class, 'exportStock'])->name('stock.export'); // Exportar Stock PDF
+            Route::get('/export', [ClientPortalController::class, 'exportStock'])->name('stock.export');
         });
 
         // --- ASN CLIENTE ---
@@ -258,7 +262,7 @@ Route::middleware(['auth'])->group(function () {
             Route::get('/{id}', [ClientPortalController::class, 'showOrder'])->name('orders.show');
             Route::get('/{id}/edit', [ClientPortalController::class, 'editOrder'])->name('orders.edit');
             Route::put('/{id}', [ClientPortalController::class, 'updateOrder'])->name('orders.update');
-            Route::get('/{id}/export', [ClientPortalController::class, 'exportOrder'])->name('orders.export'); // Exportar Pedido PDF
+            Route::get('/{id}/export', [ClientPortalController::class, 'exportOrder'])->name('orders.export');
         });
 
         // --- RMA CLIENTE ---
