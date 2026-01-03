@@ -6,22 +6,23 @@ use App\Models\Client;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 class ClientController extends Controller
 {
     /**
-     * Muestra la lista de clientes.
+     * Muestra la lista de clientes con sus usuarios vinculados.
      */
     public function index()
     {
-        $clients = Client::latest()->paginate(10);
+        // Eager loading de 'users' para optimizar la vista index del Canvas
+        $clients = Client::with('users')->latest()->paginate(10);
         return view('admin.clients.index', compact('clients'));
     }
 
     /**
-     * Muestra el formulario para crear un nuevo cliente.
+     * Formulario de creación.
      */
     public function create()
     {
@@ -29,58 +30,52 @@ class ClientController extends Controller
     }
 
     /**
-     * Almacena un nuevo cliente y su usuario de acceso al portal.
+     * Almacena el cliente y genera acceso automático al portal.
      */
     public function store(Request $request)
     {
-        $validated = $request->validate([
+        // Validamos solo los campos operativos necesarios
+        $request->validate([
             'company_name' => 'required|string|max:255',
             'tax_id'       => 'required|string|unique:clients,tax_id',
             'contact_name' => 'required|string|max:255',
             'email'        => 'required|email|unique:clients,email|unique:users,email',
-            'password'     => 'required|min:8',
             'phone'        => 'nullable|string',
             'address'      => 'nullable|string',
-            'billing_type' => 'required|in:prepaid,postpaid',
-            'logo'         => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048',
         ]);
 
-        return DB::transaction(function () use ($request, $validated) {
-            // 1. Manejo del Logo (si existe)
-            $logoUrl = null;
-            if ($request->hasFile('logo')) {
-                $logoUrl = $request->file('logo')->store('logos', 'public');
-            }
+        $randomPassword = Str::random(12);
 
-            // 2. Crear el Cliente (La tabla 'clients' NO tiene columna 'password')
+        return DB::transaction(function () use ($request, $randomPassword) {
+            
+            // 1. Crear el Cliente (Nombres coincidentes con el Canvas)
             $client = Client::create([
-                'company_name' => $validated['company_name'],
-                'tax_id'       => $validated['tax_id'],
-                'contact_name' => $validated['contact_name'],
-                'email'        => $validated['email'],
-                'phone'        => $validated['phone'],
-                'address'      => $validated['address'],
-                'billing_type' => $validated['billing_type'],
-                'logo_url'     => $logoUrl,
+                'company_name' => $request->company_name,
+                'tax_id'       => $request->tax_id,
+                'contact_name' => $request->contact_name,
+                'email'        => $request->email,
+                'phone'        => $request->phone,
+                'address'      => $request->address,
                 'is_active'    => true,
             ]);
 
-            // 3. Crear el Usuario de acceso vinculado con el rol 'user'
+            // 2. Crear el Usuario de acceso al Portal (Login con Email)
             User::create([
-                'name'      => $validated['contact_name'],
-                'email'     => $validated['email'],
-                'password'  => Hash::make($validated['password']),
+                'name'      => $request->contact_name,
+                'email'     => $request->email,
+                'password'  => Hash::make($randomPassword),
                 'client_id' => $client->id,
-                'role'      => 'user', // Rol programado para acceso de clientes
+                'role'      => 'client',
             ]);
 
+            // Mensaje de éxito formateado para el cuadro verde del listado
             return redirect()->route('admin.clients.index')
-                ->with('success', 'Cliente y usuario de acceso creados correctamente.');
+                ->with('success', "CLIENTE REGISTRADO -> Usuario: {$request->email} | Contraseña: {$randomPassword}");
         });
     }
 
     /**
-     * Muestra el formulario de edición.
+     * Formulario de edición.
      */
     public function edit(Client $client)
     {
@@ -88,74 +83,66 @@ class ClientController extends Controller
     }
 
     /**
-     * Actualiza la información del cliente.
+     * Actualiza la información operativa del cliente.
      */
     public function update(Request $request, Client $client)
     {
-        $validated = $request->validate([
+        $request->validate([
             'company_name' => 'required|string|max:255',
             'tax_id'       => 'required|string|unique:clients,tax_id,' . $client->id,
             'contact_name' => 'required|string|max:255',
             'email'        => 'required|email|unique:clients,email,' . $client->id,
-            'phone'        => 'nullable|string',
-            'address'      => 'nullable|string',
-            'billing_type' => 'required|in:prepaid,postpaid',
-            'logo'         => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048',
         ]);
 
-        if ($request->hasFile('logo')) {
-            if ($client->logo_url) {
-                Storage::disk('public')->delete($client->logo_url);
-            }
-            $validated['logo_url'] = $request->file('logo')->store('logos', 'public');
-        }
+        // Actualización masiva segura (excluyendo campos de finanzas)
+        $client->update($request->only([
+            'company_name', 'tax_id', 'contact_name', 'email', 'phone', 'address'
+        ]));
 
-        $client->update($validated);
-
-        // Opcional: Sincronizar email/nombre en la tabla users si cambiaron
-        $client->users()->update([
-            'email' => $validated['email'],
-            'name'  => $validated['contact_name']
+        // Sincronizar credenciales de usuario vinculadas al cliente
+        User::where('client_id', $client->id)->update([
+            'email' => $request->email,
+            'name'  => $request->contact_name
         ]);
 
-        return redirect()->route('admin.clients.index')->with('success', 'Cliente actualizado correctamente.');
+        return redirect()->route('admin.clients.index')->with('success', 'Información del cliente actualizada correctamente.');
     }
 
     /**
-     * Elimina al cliente (Soft Delete).
+     * Eliminación de cliente.
+     * El borrado de usuarios es automático por el método booted() definido en el Canvas.
      */
     public function destroy(Client $client)
     {
         $client->delete();
-        return redirect()->route('admin.clients.index')->with('success', 'Cliente eliminado correctamente.');
+        return redirect()->route('admin.clients.index')->with('success', 'Cliente y accesos eliminados del sistema.');
     }
 
     /**
-     * Reiniciar contraseña de los usuarios vinculados al cliente.
+     * Genera una nueva contraseña aleatoria y la muestra en el listado.
      */
     public function resetPassword(Client $client)
     {
-        $newPass = 'cliente' . date('Y'); 
-        
-        // El método resetPassword está definido en el modelo Client del Canvas
-        $client->resetPassword($newPass);
+        $newPass = 'solu' . Str::lower(Str::random(4)) . date('Y');
 
-        return redirect()->back()->with('success', "Contraseña de {$client->company_name} restablecida a: {$newPass}");
+        foreach ($client->users as $user) {
+            $user->password = Hash::make($newPass);
+            $user->save();
+        }
+
+        return redirect()->back()->with('success', "Acceso restablecido para {$client->company_name}. Nueva clave: {$newPass}");
     }
 
     /**
-     * Cambiar el estado de suspensión del cliente.
+     * Alternar estado de acceso (is_active).
+     * Si está suspendido (false), el middleware de autenticación debe impedir el login.
      */
     public function toggleStatus(Client $client)
     {
-        if ($client->isActive()) {
-            $client->suspend();
-            $statusMsg = "Cliente {$client->company_name} suspendido correctamente.";
-        } else {
-            $client->activate();
-            $statusMsg = "Cliente {$client->company_name} reactivado correctamente.";
-        }
+        $client->is_active = !$client->is_active;
+        $client->save();
 
-        return redirect()->back()->with('info', $statusMsg);
+        $statusText = $client->is_active ? 'HABILITADO' : 'SUSPENDIDO';
+        return redirect()->back()->with('info', "El portal del cliente {$client->company_name} ha sido {$statusText}.");
     }
 }
