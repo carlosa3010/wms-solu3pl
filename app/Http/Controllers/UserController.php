@@ -8,6 +8,8 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
+use Illuminate\Support\Facades\Mail; // Importante para enviar correos
+use App\Mail\UserCredentials; // Mailable para credenciales
 
 class UserController extends Controller
 {
@@ -27,8 +29,8 @@ class UserController extends Controller
             'crm'            => 'CRM & Clientes',
             'products'       => 'Catálogo de Productos',
             'inventory'      => 'Inventario (Stock/Movimientos)',
-            'infrastructure' => 'Infraestructura (Bodegas/Sucursales)', // RESTAURADO
-            'maps'           => 'Infraestructura: Mapa y Cobertura',    // RESTAURADO
+            'infrastructure' => 'Infraestructura (Bodegas/Sucursales)',
+            'maps'           => 'Infraestructura: Mapa y Cobertura',
             'receptions'     => 'Operaciones: Recepciones',
             'orders'         => 'Operaciones: Pedidos',
             'shipping'       => 'Operaciones: Envíos',
@@ -68,8 +70,19 @@ class UserController extends Controller
             'permissions' => $validated['modules'] ?? [], 
         ]);
 
+        // Enviar Correo con Credenciales
+        try {
+            // isClient true si el rol es 'user' (que mapea a cliente en tu sistema de roles) o 'client'
+            $isClient = in_array($user->role, ['user', 'client']);
+            Mail::to($user->email)->send(new UserCredentials($user, $generatedPassword, $isClient));
+        } catch (\Exception $e) {
+            // Loguear error silenciosamente o notificar en flash message
+            \Log::error('SMTP Error al crear usuario: ' . $e->getMessage());
+            // Opcional: Podrías añadir una advertencia al mensaje flash si lo deseas
+        }
+
         return redirect()->route('admin.users.index')
-            ->with('success', "Usuario creado exitosamente.\n\nCREDENCIALES:\nEmail: {$validated['email']}\nContraseña: {$generatedPassword}");
+            ->with('success', "Usuario creado exitosamente.\n\nCREDENCIALES:\nEmail: {$validated['email']}\nContraseña: {$generatedPassword} (Enviada por correo)");
     }
 
     /**
@@ -103,6 +116,10 @@ class UserController extends Controller
      */
     public function destroy(User $user)
     {
+        if ($user->id === auth()->id()) {
+            return back()->with('error', 'No puedes eliminar tu propio usuario.');
+        }
+        
         $user->delete();
         return redirect()->route('admin.users.index')->with('success', 'Usuario eliminado.');
     }
@@ -119,7 +136,17 @@ class UserController extends Controller
             'password' => Hash::make($newPassword)
         ]);
 
+        // Enviar correo con la nueva contraseña
+        try {
+            $isClient = in_array($user->role, ['user', 'client']);
+            Mail::to($user->email)->send(new UserCredentials($user, $newPassword, $isClient));
+        } catch (\Exception $e) {
+            \Log::error('SMTP Error al resetear password: ' . $e->getMessage());
+            return redirect()->route('admin.users.index')
+                ->with('warning', "Nueva contraseña generada: {$newPassword}, pero falló el envío del correo.");
+        }
+
         return redirect()->route('admin.users.index')
-            ->with('success', "Nueva contraseña generada para {$user->name}.\n\nCLAVE: {$newPassword}");
+            ->with('success', "Nueva contraseña generada para {$user->name}.\n\nCLAVE: {$newPassword} (Enviada por correo)");
     }
 }

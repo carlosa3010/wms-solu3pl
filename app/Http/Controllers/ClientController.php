@@ -8,16 +8,28 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Mail;
+use App\Mail\UserCredentials;
 
 class ClientController extends Controller
 {
     /**
      * Muestra la lista de clientes con sus usuarios vinculados.
      */
-    public function index()
+    public function index(Request $request)
     {
-        // Eager loading de 'users' para optimizar la vista index del Canvas
-        $clients = Client::with('users')->latest()->paginate(10);
+        $query = Client::with('users'); // Eager loading
+
+        if ($request->has('search')) {
+            $search = $request->search;
+            $query->where(function($q) use ($search) {
+                $q->where('company_name', 'like', "%{$search}%")
+                  ->orWhere('email', 'like', "%{$search}%")
+                  ->orWhere('contact_name', 'like', "%{$search}%");
+            });
+        }
+
+        $clients = $query->latest()->paginate(10);
         return view('admin.clients.index', compact('clients'));
     }
 
@@ -60,13 +72,21 @@ class ClientController extends Controller
             ]);
 
             // 2. Crear el Usuario de acceso al Portal (Login con Email)
-            User::create([
+            $user = User::create([
                 'name'      => $request->contact_name,
                 'email'     => $request->email,
                 'password'  => Hash::make($randomPassword),
                 'client_id' => $client->id,
                 'role'      => 'client',
             ]);
+
+            // 3. Enviar Correo con Credenciales
+            try {
+                Mail::to($client->email)->send(new UserCredentials($user, $randomPassword, true));
+            } catch (\Exception $e) {
+                // Si falla el correo, no detenemos el proceso, solo logueamos el error
+                \Log::error('Error enviando credenciales a cliente: ' . $e->getMessage());
+            }
 
             // Mensaje de éxito formateado para el cuadro verde del listado
             return redirect()->route('admin.clients.index')
@@ -128,9 +148,17 @@ class ClientController extends Controller
         foreach ($client->users as $user) {
             $user->password = Hash::make($newPass);
             $user->save();
+
+            // Enviar correo con la nueva contraseña
+            try {
+                Mail::to($user->email)->send(new UserCredentials($user, $newPass, true));
+            } catch (\Exception $e) {
+                \Log::error('Error reenviando credenciales: ' . $e->getMessage());
+                return redirect()->back()->with('warning', "Clave cambiada a {$newPass}, pero falló el envío del correo.");
+            }
         }
 
-        return redirect()->back()->with('success', "Acceso restablecido para {$client->company_name}. Nueva clave: {$newPass}");
+        return redirect()->back()->with('success', "Acceso restablecido para {$client->company_name}. Nueva clave: {$newPass} (Enviada por correo)");
     }
 
     /**

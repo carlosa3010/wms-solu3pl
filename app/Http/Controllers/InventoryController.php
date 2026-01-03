@@ -13,6 +13,8 @@ use App\Models\StockMovement;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Mail; // Importante para enviar correos
+use App\Mail\LowStockAlert; // Mailable para alertas de stock
 
 class InventoryController extends Controller
 {
@@ -139,6 +141,28 @@ class InventoryController extends Controller
                     'user_id' => Auth::id(),
                     'created_at' => now()
                 ]);
+
+                // --- ALERTA DE STOCK BAJO ---
+                // Solo verificamos si fue una salida y si el producto tiene configuración de stock mínimo
+                if ($request->type === 'out') {
+                    $product = Product::find($request->product_id);
+                    
+                    if ($product->min_stock > 0) {
+                        // Obtenemos el stock total actual (sumando todas las ubicaciones)
+                        $currentTotalStock = Inventory::where('product_id', $product->id)->sum('quantity');
+
+                        if ($currentTotalStock <= $product->min_stock) {
+                            // Enviar alerta al cliente dueño del producto
+                            if ($product->client && $product->client->email) {
+                                try {
+                                    Mail::to($product->client->email)->send(new LowStockAlert($product, $currentTotalStock));
+                                } catch (\Exception $e) {
+                                    Log::error("Error enviando alerta de stock bajo: " . $e->getMessage());
+                                }
+                            }
+                        }
+                    }
+                }
             });
 
             return redirect()->route('admin.inventory.stock')->with('success', 'Ajuste de inventario procesado correctamente.');

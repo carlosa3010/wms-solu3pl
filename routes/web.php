@@ -20,6 +20,8 @@ use App\Http\Controllers\BillingController;
 use App\Http\Controllers\RMAController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\Client\ClientPortalController;
+// Nueva importación
+use App\Http\Controllers\Auth\PasswordController;
 
 /*
 |--------------------------------------------------------------------------
@@ -35,6 +37,12 @@ Route::get('/', function () {
 Route::get('/login', [AuthController::class, 'showLoginForm'])->name('login');
 Route::post('/login', [AuthController::class, 'login'])->name('login.post');
 Route::post('/logout', [AuthController::class, 'logout'])->name('logout');
+
+// --- RECUPERACIÓN DE CONTRASEÑA ---
+Route::get('/forgot-password', [PasswordController::class, 'showLinkRequestForm'])->name('password.request');
+Route::post('/forgot-password', [PasswordController::class, 'sendResetLinkEmail'])->name('password.email');
+Route::get('/reset-password/{token}', [PasswordController::class, 'showResetForm'])->name('password.reset');
+Route::post('/reset-password', [PasswordController::class, 'reset'])->name('password.update');
 
 // --- RUTAS PROTEGIDAS (Requieren Login) ---
 Route::middleware(['auth'])->group(function () {
@@ -103,24 +111,18 @@ Route::middleware(['auth'])->group(function () {
         });
 
         // Módulo: Infraestructura (Sucursales y Bodegas)
-        // FIX: Agregamos la ruta index para sucursales apuntando al mismo controlador
         Route::get('/branches', [WarehouseManagementController::class, 'index'])->name('admin.branches.index');
-        // FIX: Alias para bodegas por si se requiere redirección
         Route::get('/warehouses', [WarehouseManagementController::class, 'index'])->name('admin.warehouses.index');
 
-        // FIX: Renombrada de 'admin.inventory.coverage' a 'admin.coverage.index' para solucionar el error
         Route::get('/coverage', [WarehouseManagementController::class, 'coverage'])->name('admin.coverage.index');
         Route::put('/branches/{id}/coverage', [WarehouseManagementController::class, 'updateCoverage'])->name('admin.branches.coverage');
-        
         Route::get('/rack-details', [WarehouseManagementController::class, 'getRackDetails'])->name('admin.inventory.rack_details');
         Route::post('/save-rack', [WarehouseManagementController::class, 'saveRackDetails'])->name('admin.inventory.save_rack');
 
-        // CRUD Sucursales (Sin resource para mayor control manual según tu código)
         Route::post('/branches', [WarehouseManagementController::class, 'storeBranch'])->name('admin.branches.store');
         Route::put('/branches/{id}', [WarehouseManagementController::class, 'updateBranch'])->name('admin.branches.update');
         Route::delete('/branches/{id}', [WarehouseManagementController::class, 'destroyBranch'])->name('admin.branches.destroy');
         
-        // CRUD Bodegas
         Route::post('/warehouses', [WarehouseManagementController::class, 'storeWarehouse'])->name('admin.warehouses.store');
         Route::put('/warehouses/{id}', [WarehouseManagementController::class, 'updateWarehouse'])->name('admin.warehouses.update');
         Route::delete('/warehouses/{id}', [WarehouseManagementController::class, 'destroyWarehouse'])->name('admin.warehouses.destroy');
@@ -184,6 +186,9 @@ Route::middleware(['auth'])->group(function () {
             Route::get('/', [SettingController::class, 'index'])->name('admin.settings.index');
             Route::post('/', [SettingController::class, 'update'])->name('admin.settings.update');
             
+            // NUEVA RUTA: Prueba de Correo
+            Route::post('/test-mail', [SettingController::class, 'sendTestMail'])->name('admin.settings.test_mail');
+
             Route::get('/bins', [BinTypeController::class, 'index'])->name('admin.bintypes.index');
             Route::post('/bins', [BinTypeController::class, 'store'])->name('admin.bintypes.store');
             Route::delete('/bins/{id}', [BinTypeController::class, 'destroy'])->name('admin.bintypes.destroy');
