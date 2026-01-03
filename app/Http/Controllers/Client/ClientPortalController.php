@@ -13,13 +13,14 @@ use App\Models\OrderItem;
 use App\Models\RMA;
 use App\Models\Invoice;
 use App\Models\ServiceCharge;
+use App\Models\Category;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 
 class ClientPortalController extends Controller
 {
     /**
-     * Dashboard Principal: Resumen operativo y financiero.
+     * Dashboard Principal: Resumen operativo y financiero segmentado.
      */
     public function dashboard()
     {
@@ -28,14 +29,12 @@ class ClientPortalController extends Controller
             return redirect()->route('login')->with('error', 'Usuario no vinculado a un cliente.');
         }
 
-        // Conteos segmentados
+        // Conteos segmentados por client_id
         $productsCount = Product::where('client_id', $clientId)->count();
         $pendingRmas = RMA::where('client_id', $clientId)->where('status', 'pending')->count();
         $activeAsns = ASN::where('client_id', $clientId)->whereIn('status', ['draft', 'sent'])->count();
         
-        /**
-         * Corte de cuenta: Suma de cargos de servicio del mes actual.
-         */
+        // Corte de cuenta: Suma de cargos de servicio del mes actual
         $corteCuenta = ServiceCharge::where('client_id', $clientId)
             ->whereMonth('created_at', now()->month)
             ->whereYear('created_at', now()->year)
@@ -47,13 +46,46 @@ class ClientPortalController extends Controller
     }
 
     /**
-     * Catálogo: Ver solo los productos del cliente.
+     * Catálogo: Ver solo los productos (SKUs) del cliente.
      */
     public function catalog()
     {
         $clientId = auth()->user()->client_id;
-        $products = Product::where('client_id', $clientId)->latest()->get();
-        return view('client.catalog', compact('products'));
+        
+        // Enviamos $skus para la tabla y $categories para el formulario de creación
+        $skus = Product::where('client_id', $clientId)->with('category')->latest()->get();
+        $categories = Category::orderBy('name')->get();
+
+        return view('client.catalog', compact('skus', 'categories'));
+    }
+
+    /**
+     * Guardar nuevo producto (SKU) con los mismos campos del Admin.
+     */
+    public function storeSku(Request $request)
+    {
+        $clientId = auth()->user()->client_id;
+
+        $request->validate([
+            'sku' => 'required|unique:products,sku',
+            'name' => 'required|string|max:255',
+            'category_id' => 'required|exists:categories,id',
+            'weight_kg' => 'nullable|numeric|min:0',
+            'min_stock_level' => 'nullable|integer|min:0',
+        ]);
+
+        Product::create([
+            'client_id' => $clientId,
+            'sku' => $request->sku,
+            'barcode' => $request->barcode,
+            'name' => $request->name,
+            'description' => $request->description,
+            'category_id' => $request->category_id,
+            'weight_kg' => $request->weight_kg,
+            'min_stock_level' => $request->min_stock_level,
+        ]);
+
+        return redirect()->route('client.catalog')->with('success', 'Producto registrado correctamente.');
     }
 
     /**
@@ -64,11 +96,11 @@ class ClientPortalController extends Controller
         $clientId = auth()->user()->client_id;
 
         // Consultamos el inventario filtrando por los productos que pertenecen al cliente
-        $inventory = Inventory::whereHas('product', function($query) use ($clientId) {
+        $stocks = Inventory::whereHas('product', function($query) use ($clientId) {
             $query->where('client_id', $clientId);
         })->with(['product', 'location.warehouse.branch'])->get();
 
-        return view('client.stock', compact('inventory'));
+        return view('client.stock', compact('stocks'));
     }
 
     /**
@@ -88,75 +120,8 @@ class ClientPortalController extends Controller
         return view('client.asn_create', compact('products'));
     }
 
-    public function storeAsn(Request $request)
-    {
-        $clientId = auth()->user()->client_id;
-
-        DB::transaction(function () use ($request, $clientId) {
-            $asn = ASN::create([
-                'asn_number' => 'ASN-' . time(),
-                'client_id' => $clientId,
-                'carrier_name' => $request->carrier_name,
-                'tracking_number' => $request->tracking_number,
-                'expected_arrival_date' => $request->expected_arrival_date,
-                'status' => 'sent'
-            ]);
-
-            if ($request->has('items')) {
-                foreach ($request->items as $item) {
-                    ASNItem::create([
-                        'asn_id' => $asn->id,
-                        'product_id' => $item['product_id'],
-                        'expected_quantity' => $item['quantity']
-                    ]);
-                }
-            }
-        });
-
-        return redirect()->route('client.asn.index')->with('success', 'ASN creado y enviado correctamente.');
-    }
-
     /**
-     * Pedidos (Orders): Creación manual desde el panel.
-     */
-    public function createOrder()
-    {
-        $clientId = auth()->user()->client_id;
-        $products = Product::where('client_id', $clientId)->get();
-        return view('client.order_create', compact('products'));
-    }
-
-    public function storeOrder(Request $request)
-    {
-        $clientId = auth()->user()->client_id;
-
-        DB::transaction(function () use ($request, $clientId) {
-            $order = Order::create([
-                'order_number' => 'ORD-' . strtoupper(uniqid()),
-                'client_id' => $clientId,
-                'customer_name' => $request->customer_name,
-                'shipping_address' => $request->shipping_address,
-                'status' => 'pending'
-            ]);
-
-            if ($request->has('items')) {
-                foreach ($request->items as $item) {
-                    $product = Product::find($item['product_id']);
-                    OrderItem::create([
-                        'order_id' => $order->id,
-                        'product_id' => $item['product_id'],
-                        'quantity' => $item['quantity'],
-                        'price_at_order' => $product->price ?? 0 
-                    ]);
-                }
-            }
-        });
-
-        return redirect()->route('client.portal')->with('success', 'Pedido registrado con éxito.');
-    }
-
-    /**
-     * RMA: Devoluciones para autorizar o rechazar.
+     * RMA: Devoluciones segmentadas.
      */
     public function rmaIndex()
     {
@@ -165,46 +130,13 @@ class ClientPortalController extends Controller
         return view('client.rma_index', compact('rmas'));
     }
 
-    public function updateRmaStatus(Request $request, $id)
-    {
-        $clientId = auth()->user()->client_id;
-        $rma = RMA::where('client_id', $clientId)->findOrFail($id);
-
-        $request->validate([
-            'status' => 'required|in:authorized,rejected'
-        ]);
-
-        $rma->update(['status' => $request->status]);
-
-        return back()->with('success', 'Estado de devolución actualizado correctamente.');
-    }
-
     /**
-     * Facturación: Lista de facturas y descarga.
+     * Facturación: Lista de facturas.
      */
     public function billing()
     {
         $clientId = auth()->user()->client_id;
         $invoices = Invoice::where('client_id', $clientId)->latest()->get();
         return view('client.billing_index', compact('invoices'));
-    }
-
-    /**
-     * Descarga de Prefactura (Cargos del mes actual)
-     */
-    public function downloadPreInvoice()
-    {
-        $clientId = auth()->user()->client_id;
-        
-        $charges = ServiceCharge::where('client_id', $clientId)
-            ->whereMonth('created_at', now()->month)
-            ->whereYear('created_at', now()->year)
-            ->get();
-        
-        if ($charges->isEmpty()) {
-            return back()->with('error', 'No hay cargos registrados en el ciclo actual.');
-        }
-
-        return back()->with('info', 'Generando reporte de pre-factura del mes...');
     }
 }
