@@ -1,0 +1,23 @@
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+
+class OrderAllocation extends Model
+{
+    use HasFactory;
+
+    protected $fillable = ['order_item_id', 'location_id', 'quantity'];
+
+    public function item()
+    {
+        return $this->belongsTo(OrderItem::class, 'order_item_id');
+    }
+
+    public function location()
+    {
+        return $this->belongsTo(Location::class);
+    }
+}
