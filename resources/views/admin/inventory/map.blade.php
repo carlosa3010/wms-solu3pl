@@ -35,7 +35,9 @@
                 <a href="{{ route('admin.bintypes.index') }}" class="text-xs font-bold text-slate-600 bg-white border border-slate-300 px-3 py-1.5 rounded-lg hover:bg-slate-50 transition flex items-center gap-2">
                     <i class="fa-solid fa-cubes"></i> Configurar Tipos de Bines
                 </a>
-                <a href="{{ route('admin.inventory.map') }}" class="text-xs font-bold text-white bg-slate-700 px-3 py-1.5 rounded-lg hover:bg-slate-800 transition flex items-center gap-2">
+
+                {{-- FIX: Ruta de retorno dinámica. Si no se pasa $backRoute, usa la de sucursales por defecto --}}
+                <a href="{{ isset($backRoute) ? route($backRoute) : route('admin.branches.index') }}" class="text-xs font-bold text-white bg-slate-700 px-3 py-1.5 rounded-lg hover:bg-slate-800 transition flex items-center gap-2">
                     <i class="fa-solid fa-arrow-left"></i> Volver a Gestión
                 </a>
             </div>
@@ -199,7 +201,9 @@
                         <button onclick="openWarehouseModal('{{ $branch->id }}')" class="py-2 px-3 bg-white border border-slate-200 text-slate-600 rounded-lg text-xs font-bold hover:bg-slate-50 transition">
                             <i class="fa-solid fa-warehouse mr-1"></i> + Bodega
                         </button>
-                        <a href="{{ route('admin.inventory.map', ['view' => 'map']) }}" class="py-2 px-3 bg-custom-primary/10 text-custom-primary border border-transparent rounded-lg text-xs font-bold hover:bg-custom-primary hover:text-white transition text-center flex items-center justify-center">
+                        
+                        {{-- FIX: Enlace dinámico a la vista de mapa usando la misma ruta base --}}
+                        <a href="{{ request()->fullUrlWithQuery(['view' => 'map']) }}" class="py-2 px-3 bg-custom-primary/10 text-custom-primary border border-transparent rounded-lg text-xs font-bold hover:bg-custom-primary hover:text-white transition text-center flex items-center justify-center">
                             Ver Planta <i class="fa-solid fa-arrow-right ml-1"></i>
                         </a>
                     </div>

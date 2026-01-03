@@ -1,21 +1,25 @@
 @php
-    // Recuperar configuración de marca (Branding) desde el modelo Setting
-    $primaryColor = \App\Models\Setting::get('primary_color', '#2563eb'); 
-    $sidebarColor = \App\Models\Setting::get('sidebar_color', '#0f172a'); 
-    $siteLogo = \App\Models\Setting::get('site_logo');
-    $siteFavicon = \App\Models\Setting::get('site_favicon');
+    // Recuperar configuración de marca (Branding)
+    $primaryColor = class_exists('\App\Models\Setting') ? \App\Models\Setting::get('primary_color', '#2563eb') : '#2563eb'; 
+    $sidebarColor = class_exists('\App\Models\Setting') ? \App\Models\Setting::get('sidebar_color', '#0f172a') : '#0f172a'; 
+    $siteLogo = class_exists('\App\Models\Setting') ? \App\Models\Setting::get('site_logo') : null;
+    $siteFavicon = class_exists('\App\Models\Setting') ? \App\Models\Setting::get('site_favicon') : null;
 
-    // LÓGICA DE NOTIFICACIONES (Alertas de Operación)
-    $pendingAsnsCount = \App\Models\ASN::where('status', 'pending')->count();
-    $pendingOrdersCount = \App\Models\Order::where('status', 'pending')->count();
+    // LÓGICA DE NOTIFICACIONES
+    $pendingAsnsCount = class_exists('\App\Models\ASN') ? \App\Models\ASN::where('status', 'pending')->count() : 0;
+    $pendingOrdersCount = class_exists('\App\Models\Order') ? \App\Models\Order::where('status', 'pending')->count() : 0;
     $totalNotifications = $pendingAsnsCount + $pendingOrdersCount;
 
-    // LÓGICA DE PERMISOS PARA SUPERVISORES
+    // LÓGICA DE PERMISOS
     $user = auth()->user();
-    $isAdmin = $user->role === 'admin';
-    $perms = $user->permissions ?? [];
+    if (!$user) {
+        $isAdmin = false;
+        $perms = [];
+    } else {
+        $isAdmin = $user->role === 'admin';
+        $perms = $user->permissions ?? [];
+    }
     
-    // Función helper para verificar acceso a módulos
     $canSee = function($module) use ($isAdmin, $perms) {
         return $isAdmin || in_array($module, $perms);
     };
@@ -32,9 +36,16 @@
         <link rel="icon" type="image/x-icon" href="{{ $siteFavicon }}">
     @endif
 
-    <!-- Recursos Externos -->
+    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Alpine.js (Necesario para los menús colapsables) -->
+    <script src="//unpkg.com/alpinejs" defer></script>
+
+    <!-- FontAwesome -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
     
     <style>
@@ -56,6 +67,12 @@
         @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
         
         #sidebar.mobile-active { transform: translateX(0); }
+        
+        /* Estilos para transición suave de altura en Alpine */
+        .collapse-enter { max-height: 0; overflow: hidden; transition: max-height 0.3s ease-out; }
+        .collapse-enter-active { max-height: 500px; }
+        .collapse-leave { max-height: 500px; overflow: hidden; transition: max-height 0.3s ease-in; }
+        .collapse-leave-active { max-height: 0; }
     </style>
     @yield('styles')
 </head>
@@ -79,118 +96,177 @@
 
         <nav class="flex-1 overflow-y-auto py-4 px-3 space-y-1 custom-scrollbar">
             
-            <!-- SECCIÓN: OPERATIVO -->
+            <!-- SECCIÓN: OPERATIVO (Siempre visible) -->
             @if($canSee('dashboard'))
-                <p class="px-3 text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 mt-2">Central</p>
-                <a href="{{ route('admin.dashboard') }}" class="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all {{ request()->routeIs('admin.dashboard') ? 'bg-custom-primary text-white shadow-lg' : 'text-slate-300 hover:bg-white/10 hover:text-white' }}">
-                    <i class="fa-solid fa-chart-pie w-5 text-center"></i>
-                    <span class="text-sm font-bold">Dashboard</span>
-                </a>
+                <div class="mb-4">
+                    <a href="{{ route('admin.dashboard') }}" class="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all {{ request()->routeIs('admin.dashboard') ? 'bg-custom-primary text-white shadow-lg' : 'text-slate-300 hover:bg-white/10 hover:text-white' }}">
+                        <i class="fa-solid fa-chart-pie w-5 text-center"></i>
+                        <span class="text-sm font-bold">Dashboard</span>
+                    </a>
+                </div>
             @endif
 
             <!-- SECCIÓN: COMERCIAL -->
             @if($canSee('clients') || $canSee('crm'))
-                <p class="px-3 text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 mt-6">Comercial</p>
-                @if($canSee('clients'))
-                <a href="{{ route('admin.clients.index') }}" class="flex items-center gap-3 px-3 py-2 rounded-lg transition-all {{ request()->routeIs('admin.clients.*') ? 'bg-custom-primary text-white' : 'text-slate-300 hover:bg-white/10 hover:text-white' }}">
-                    <i class="fa-solid fa-briefcase w-5 text-center"></i>
-                    <span class="text-sm font-medium">Clientes</span>
-                </a>
-                @endif
-                @if($canSee('crm'))
-                <a href="{{ route('admin.crm.index') }}" class="flex items-center gap-3 px-3 py-2 rounded-lg transition-all {{ request()->routeIs('admin.crm.*') ? 'bg-custom-primary text-white' : 'text-slate-300 hover:bg-white/10 hover:text-white' }}">
-                    <i class="fa-solid fa-user-group w-5 text-center"></i>
-                    <span class="text-sm font-medium">CRM / Leads</span>
-                </a>
-                @endif
+                <div x-data="{ open: {{ request()->routeIs('admin.clients.*') || request()->routeIs('admin.crm.*') ? 'true' : 'false' }} }" class="mb-1">
+                    <button @click="open = !open" class="w-full flex justify-between items-center px-3 py-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest hover:text-white transition-colors focus:outline-none">
+                        <span>Comercial</span>
+                        <i class="fa-solid fa-chevron-down text-[10px] transition-transform duration-200" :class="open ? '' : '-rotate-90'"></i>
+                    </button>
+                    <div x-show="open" class="space-y-1" style="display: none;">
+                        @if($canSee('clients'))
+                        <a href="{{ route('admin.clients.index') }}" class="flex items-center gap-3 px-3 py-2 rounded-lg transition-all {{ request()->routeIs('admin.clients.*') ? 'bg-custom-primary text-white' : 'text-slate-300 hover:bg-white/10 hover:text-white' }}">
+                            <i class="fa-solid fa-briefcase w-5 text-center"></i>
+                            <span class="text-sm font-medium">Clientes</span>
+                        </a>
+                        @endif
+                        @if($canSee('crm'))
+                        <a href="{{ route('admin.crm.index') }}" class="flex items-center gap-3 px-3 py-2 rounded-lg transition-all {{ request()->routeIs('admin.crm.*') ? 'bg-custom-primary text-white' : 'text-slate-300 hover:bg-white/10 hover:text-white' }}">
+                            <i class="fa-solid fa-user-group w-5 text-center"></i>
+                            <span class="text-sm font-medium">CRM / Leads</span>
+                        </a>
+                        @endif
+                    </div>
+                </div>
             @endif
 
             <!-- SECCIÓN: INVENTARIO -->
             @if($canSee('products') || $canSee('inventory'))
-                <p class="px-3 text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 mt-6">Inventario</p>
-                @if($canSee('products'))
-                <a href="{{ route('admin.products.index') }}" class="flex items-center gap-3 px-3 py-2 rounded-lg transition-all {{ request()->routeIs('admin.products.*') ? 'bg-custom-primary text-white' : 'text-slate-300 hover:bg-white/10 hover:text-white' }}">
-                    <i class="fa-solid fa-barcode w-5 text-center"></i>
-                    <span class="text-sm font-medium">Catálogo Maestro</span>
-                </a>
-                <a href="{{ route('admin.categories.index') }}" class="flex items-center gap-3 px-3 py-2 rounded-lg transition-all {{ request()->routeIs('admin.categories.*') ? 'bg-custom-primary text-white' : 'text-slate-300 hover:bg-white/10 hover:text-white' }}">
-                    <i class="fa-solid fa-tags w-5 text-center"></i>
-                    <span class="text-sm font-medium">Categorías</span>
-                </a>
-                @endif
-                @if($canSee('inventory'))
-                <a href="{{ route('admin.inventory.stock') }}" class="flex items-center gap-3 px-3 py-2 rounded-lg transition-all {{ request()->routeIs('admin.inventory.stock') ? 'bg-custom-primary text-white' : 'text-slate-300 hover:bg-white/10 hover:text-white' }}">
-                    <i class="fa-solid fa-boxes-stacked w-5 text-center"></i>
-                    <span class="text-sm font-medium">Stock Actual</span>
-                </a>
-                <a href="{{ route('admin.inventory.movements') }}" class="flex items-center gap-3 px-3 py-2 rounded-lg transition-all {{ request()->routeIs('admin.inventory.movements') ? 'bg-custom-primary text-white' : 'text-slate-300 hover:bg-white/10 hover:text-white' }}">
-                    <i class="fa-solid fa-clock-rotate-left w-5 text-center"></i>
-                    <span class="text-sm font-medium">Kardex (Movimientos)</span>
-                </a>
-                <a href="{{ route('admin.inventory.adjustments') }}" class="flex items-center gap-3 px-3 py-2 rounded-lg transition-all {{ request()->routeIs('admin.inventory.adjustments') ? 'bg-custom-primary text-white' : 'text-slate-300 hover:bg-white/10 hover:text-white' }}">
-                    <i class="fa-solid fa-scale-balanced w-5 text-center"></i>
-                    <span class="text-sm font-medium">Ajustes Manuales</span>
-                </a>
-                @endif
+                <div x-data="{ open: {{ request()->routeIs('admin.products.*') || request()->routeIs('admin.categories.*') || request()->routeIs('admin.inventory.*') ? 'true' : 'false' }} }" class="mb-1">
+                    <button @click="open = !open" class="w-full flex justify-between items-center px-3 py-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest hover:text-white transition-colors focus:outline-none">
+                        <span>Inventario</span>
+                        <i class="fa-solid fa-chevron-down text-[10px] transition-transform duration-200" :class="open ? '' : '-rotate-90'"></i>
+                    </button>
+                    <div x-show="open" class="space-y-1" style="display: none;">
+                        @if($canSee('products'))
+                        <a href="{{ route('admin.products.index') }}" class="flex items-center gap-3 px-3 py-2 rounded-lg transition-all {{ request()->routeIs('admin.products.*') ? 'bg-custom-primary text-white' : 'text-slate-300 hover:bg-white/10 hover:text-white' }}">
+                            <i class="fa-solid fa-barcode w-5 text-center"></i>
+                            <span class="text-sm font-medium">Catálogo Maestro</span>
+                        </a>
+                        <a href="{{ route('admin.categories.index') }}" class="flex items-center gap-3 px-3 py-2 rounded-lg transition-all {{ request()->routeIs('admin.categories.*') ? 'bg-custom-primary text-white' : 'text-slate-300 hover:bg-white/10 hover:text-white' }}">
+                            <i class="fa-solid fa-tags w-5 text-center"></i>
+                            <span class="text-sm font-medium">Categorías</span>
+                        </a>
+                        @endif
+                        @if($canSee('inventory'))
+                        <a href="{{ route('admin.inventory.stock') }}" class="flex items-center gap-3 px-3 py-2 rounded-lg transition-all {{ request()->routeIs('admin.inventory.stock') ? 'bg-custom-primary text-white' : 'text-slate-300 hover:bg-white/10 hover:text-white' }}">
+                            <i class="fa-solid fa-boxes-stacked w-5 text-center"></i>
+                            <span class="text-sm font-medium">Stock Actual</span>
+                        </a>
+                        <a href="{{ route('admin.inventory.movements') }}" class="flex items-center gap-3 px-3 py-2 rounded-lg transition-all {{ request()->routeIs('admin.inventory.movements') ? 'bg-custom-primary text-white' : 'text-slate-300 hover:bg-white/10 hover:text-white' }}">
+                            <i class="fa-solid fa-clock-rotate-left w-5 text-center"></i>
+                            <span class="text-sm font-medium">Kardex (Movimientos)</span>
+                        </a>
+                        <a href="{{ route('admin.inventory.adjustments') }}" class="flex items-center gap-3 px-3 py-2 rounded-lg transition-all {{ request()->routeIs('admin.inventory.adjustments') ? 'bg-custom-primary text-white' : 'text-slate-300 hover:bg-white/10 hover:text-white' }}">
+                            <i class="fa-solid fa-scale-balanced w-5 text-center"></i>
+                            <span class="text-sm font-medium">Ajustes Manuales</span>
+                        </a>
+                        @endif
+                    </div>
+                </div>
             @endif
 
             <!-- SECCIÓN: FLUJO OPERATIVO -->
             @if($canSee('operations'))
-                <p class="px-3 text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 mt-6">Operaciones</p>
-                <a href="{{ route('admin.receptions.index') }}" class="flex items-center gap-3 px-3 py-2 rounded-lg transition-all {{ request()->routeIs('admin.receptions.*') ? 'bg-custom-primary text-white' : 'text-slate-300 hover:bg-white/10 hover:text-white' }}">
-                    <i class="fa-solid fa-truck-ramp-box w-5 text-center"></i>
-                    <span class="text-sm font-medium">Entradas (ASN)</span>
-                </a>
-                <a href="{{ route('admin.orders.index') }}" class="flex items-center gap-3 px-3 py-2 rounded-lg transition-all {{ request()->routeIs('admin.orders.*') ? 'bg-custom-primary text-white' : 'text-slate-300 hover:bg-white/10 hover:text-white' }}">
-                    <i class="fa-solid fa-cart-shopping w-5 text-center"></i>
-                    <span class="text-sm font-medium">Salidas (Pedidos)</span>
-                </a>
-                <a href="{{ route('admin.shipping.index') }}" class="flex items-center gap-3 px-3 py-2 rounded-lg transition-all {{ request()->routeIs('admin.shipping.*') ? 'bg-custom-primary text-white' : 'text-slate-300 hover:bg-white/10 hover:text-white' }}">
-                    <i class="fa-solid fa-truck-fast w-5 text-center"></i>
-                    <span class="text-sm font-medium">Despachos</span>
-                </a>
-                <a href="{{ route('admin.transfers.index') }}" class="flex items-center gap-3 px-3 py-2 rounded-lg transition-all {{ request()->routeIs('admin.transfers.*') ? 'bg-custom-primary text-white' : 'text-slate-300 hover:bg-white/10 hover:text-white' }}">
-                    <i class="fa-solid fa-arrow-right-arrow-left w-5 text-center"></i>
-                    <span class="text-sm font-medium">Traslados Internos</span>
-                </a>
-                <a href="{{ route('admin.rma.index') }}" class="flex items-center gap-3 px-3 py-2 rounded-lg transition-all {{ request()->routeIs('admin.rma.*') ? 'bg-custom-primary text-white' : 'text-slate-300 hover:bg-white/10 hover:text-white' }}">
-                    <i class="fa-solid fa-rotate-left w-5 text-center"></i>
-                    <span class="text-sm font-medium">Devoluciones (RMA)</span>
-                </a>
+                <div x-data="{ open: {{ request()->routeIs('admin.receptions.*') || request()->routeIs('admin.orders.*') || request()->routeIs('admin.shipping.*') || request()->routeIs('admin.transfers.*') || request()->routeIs('admin.rma.*') ? 'true' : 'false' }} }" class="mb-1">
+                    <button @click="open = !open" class="w-full flex justify-between items-center px-3 py-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest hover:text-white transition-colors focus:outline-none">
+                        <span>Operaciones</span>
+                        <i class="fa-solid fa-chevron-down text-[10px] transition-transform duration-200" :class="open ? '' : '-rotate-90'"></i>
+                    </button>
+                    <div x-show="open" class="space-y-1" style="display: none;">
+                        <a href="{{ route('admin.receptions.index') }}" class="flex items-center gap-3 px-3 py-2 rounded-lg transition-all {{ request()->routeIs('admin.receptions.*') ? 'bg-custom-primary text-white' : 'text-slate-300 hover:bg-white/10 hover:text-white' }}">
+                            <i class="fa-solid fa-truck-ramp-box w-5 text-center"></i>
+                            <span class="text-sm font-medium">Entradas (ASN)</span>
+                        </a>
+                        <a href="{{ route('admin.orders.index') }}" class="flex items-center gap-3 px-3 py-2 rounded-lg transition-all {{ request()->routeIs('admin.orders.*') ? 'bg-custom-primary text-white' : 'text-slate-300 hover:bg-white/10 hover:text-white' }}">
+                            <i class="fa-solid fa-cart-shopping w-5 text-center"></i>
+                            <span class="text-sm font-medium">Salidas (Pedidos)</span>
+                        </a>
+                        <a href="{{ route('admin.shipping.index') }}" class="flex items-center gap-3 px-3 py-2 rounded-lg transition-all {{ request()->routeIs('admin.shipping.*') ? 'bg-custom-primary text-white' : 'text-slate-300 hover:bg-white/10 hover:text-white' }}">
+                            <i class="fa-solid fa-truck-fast w-5 text-center"></i>
+                            <span class="text-sm font-medium">Despachos</span>
+                        </a>
+                        <a href="{{ route('admin.transfers.index') }}" class="flex items-center gap-3 px-3 py-2 rounded-lg transition-all {{ request()->routeIs('admin.transfers.*') ? 'bg-custom-primary text-white' : 'text-slate-300 hover:bg-white/10 hover:text-white' }}">
+                            <i class="fa-solid fa-arrow-right-arrow-left w-5 text-center"></i>
+                            <span class="text-sm font-medium">Traslados Internos</span>
+                        </a>
+                        <a href="{{ route('admin.rma.index') }}" class="flex items-center gap-3 px-3 py-2 rounded-lg transition-all {{ request()->routeIs('admin.rma.*') ? 'bg-custom-primary text-white' : 'text-slate-300 hover:bg-white/10 hover:text-white' }}">
+                            <i class="fa-solid fa-rotate-left w-5 text-center"></i>
+                            <span class="text-sm font-medium">Devoluciones (RMA)</span>
+                        </a>
+                    </div>
+                </div>
             @endif
 
             <!-- SECCIÓN: FINANZAS -->
             @if($canSee('billing'))
-                <p class="px-3 text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 mt-6">Finanzas</p>
-                <a href="{{ route('admin.billing.index') }}" class="flex items-center gap-3 px-3 py-2 rounded-lg transition-all {{ request()->routeIs('admin.billing.index') ? 'bg-custom-primary text-white' : 'text-slate-300 hover:bg-white/10 hover:text-white' }}">
-                    <i class="fa-solid fa-file-invoice-dollar w-5 text-center"></i>
-                    <span class="text-sm font-medium">Facturación</span>
-                </a>
-                <a href="{{ route('admin.billing.rates') }}" class="flex items-center gap-3 px-3 py-2 rounded-lg transition-all {{ request()->routeIs('admin.billing.rates') ? 'bg-custom-primary text-white' : 'text-slate-300 hover:bg-white/10 hover:text-white' }}">
-                    <i class="fa-solid fa-hand-holding-dollar w-5 text-center"></i>
-                    <span class="text-sm font-medium">Tarifas de Servicios</span>
-                </a>
+                <div x-data="{ open: {{ request()->routeIs('admin.billing.*') ? 'true' : 'false' }} }" class="mb-1">
+                    <button @click="open = !open" class="w-full flex justify-between items-center px-3 py-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest hover:text-white transition-colors focus:outline-none">
+                        <span>Finanzas</span>
+                        <i class="fa-solid fa-chevron-down text-[10px] transition-transform duration-200" :class="open ? '' : '-rotate-90'"></i>
+                    </button>
+                    <div x-show="open" class="space-y-1" style="display: none;">
+                        <a href="{{ route('admin.billing.index') }}" class="flex items-center gap-3 px-3 py-2 rounded-lg transition-all {{ request()->routeIs('admin.billing.index') ? 'bg-custom-primary text-white' : 'text-slate-300 hover:bg-white/10 hover:text-white' }}">
+                            <i class="fa-solid fa-file-invoice-dollar w-5 text-center"></i>
+                            <span class="text-sm font-medium">Facturación</span>
+                        </a>
+                        <a href="{{ route('admin.billing.rates') }}" class="flex items-center gap-3 px-3 py-2 rounded-lg transition-all {{ request()->routeIs('admin.billing.rates') ? 'bg-custom-primary text-white' : 'text-slate-300 hover:bg-white/10 hover:text-white' }}">
+                            <i class="fa-solid fa-hand-holding-dollar w-5 text-center"></i>
+                            <span class="text-sm font-medium">Tarifas de Servicios</span>
+                        </a>
+                    </div>
+                </div>
+            @endif
+            
+            <!-- SECCIÓN: INFRAESTRUCTURA -->
+            @if($canSee('infrastructure') || $canSee('settings'))
+                <div x-data="{ open: {{ request()->routeIs('admin.branches.*') || request()->routeIs('admin.inventory.map') || request()->routeIs('admin.coverage.*') ? 'true' : 'false' }} }" class="mb-1">
+                    <button @click="open = !open" class="w-full flex justify-between items-center px-3 py-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest hover:text-white transition-colors focus:outline-none">
+                        <span>Infraestructura</span>
+                        <i class="fa-solid fa-chevron-down text-[10px] transition-transform duration-200" :class="open ? '' : '-rotate-90'"></i>
+                    </button>
+                    <div x-show="open" class="space-y-1" style="display: none;">
+                        <a href="{{ route('admin.branches.index') }}" class="flex items-center gap-3 px-3 py-2 rounded-lg transition-all {{ request()->routeIs('admin.branches.*') ? 'bg-custom-primary text-white' : 'text-slate-300 hover:bg-white/10 hover:text-white' }}">
+                            <i class="fa-solid fa-building w-5 text-center"></i>
+                            <span class="text-sm font-medium">Sucursales y Bodegas</span>
+                        </a>
+                        
+                        <!-- FIX: Enlace correcto para el mapa -->
+                        <a href="{{ route('admin.inventory.map', ['view' => 'map']) }}" class="flex items-center gap-3 px-3 py-2 rounded-lg transition-all {{ request()->routeIs('admin.inventory.map') ? 'bg-custom-primary text-white' : 'text-slate-300 hover:bg-white/10 hover:text-white' }}">
+                            <i class="fa-solid fa-map-location-dot w-5 text-center"></i>
+                            <span class="text-sm font-medium">Mapa de Bodegas</span>
+                        </a>
+
+                        <a href="{{ route('admin.coverage.index') }}" class="flex items-center gap-3 px-3 py-2 rounded-lg transition-all {{ request()->routeIs('admin.coverage.*') ? 'bg-custom-primary text-white' : 'text-slate-300 hover:bg-white/10 hover:text-white' }}">
+                            <i class="fa-solid fa-globe w-5 text-center"></i>
+                            <span class="text-sm font-medium">Cobertura (Zonas)</span>
+                        </a>
+                    </div>
+                </div>
             @endif
 
-            <!-- SECCIÓN: CONFIGURACIÓN E INFRAESTRUCTURA -->
+            <!-- SECCIÓN: CONFIGURACIÓN -->
             @if($canSee('settings'))
-                <p class="px-3 text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 mt-6">Configuración</p>
-                <a href="{{ route('admin.inventory.map') }}" class="flex items-center gap-3 px-3 py-2 rounded-lg transition-all {{ request()->routeIs('admin.inventory.map') && !request()->has('view') ? 'bg-custom-primary text-white' : 'text-slate-300 hover:bg-white/10 hover:text-white' }}">
-                    <i class="fa-solid fa-warehouse w-5 text-center"></i>
-                    <span class="text-sm font-medium">Sedes & Bodegas</span>
-                </a>
-                <a href="{{ route('admin.bintypes.index') }}" class="flex items-center gap-3 px-3 py-2 rounded-lg transition-all {{ request()->routeIs('admin.bintypes.*') ? 'bg-custom-primary text-white' : 'text-slate-300 hover:bg-white/10 hover:text-white' }}">
-                    <i class="fa-solid fa-cubes w-5 text-center"></i>
-                    <span class="text-sm font-medium">Tipos de Contenedores</span>
-                </a>
-                <a href="{{ route('admin.settings.index') }}" class="flex items-center gap-3 px-3 py-2 rounded-lg transition-all {{ request()->routeIs('admin.settings.*') ? 'bg-custom-primary text-white' : 'text-slate-300 hover:bg-white/10 hover:text-white' }}">
-                    <i class="fa-solid fa-gears w-5 text-center"></i>
-                    <span class="text-sm font-medium">Marca & Sistema</span>
-                </a>
-                <a href="{{ route('admin.users.index') }}" class="flex items-center gap-3 px-3 py-2 rounded-lg transition-all {{ request()->routeIs('admin.users.*') ? 'bg-custom-primary text-white' : 'text-slate-300 hover:bg-white/10 hover:text-white' }}">
-                    <i class="fa-solid fa-users-gear w-5 text-center"></i>
-                    <span class="text-sm font-medium">Usuarios</span>
-                </a>
+                <div x-data="{ open: {{ request()->routeIs('admin.bintypes.*') || request()->routeIs('admin.settings.*') || request()->routeIs('admin.users.*') ? 'true' : 'false' }} }" class="mb-1">
+                    <button @click="open = !open" class="w-full flex justify-between items-center px-3 py-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest hover:text-white transition-colors focus:outline-none">
+                        <span>Configuración</span>
+                        <i class="fa-solid fa-chevron-down text-[10px] transition-transform duration-200" :class="open ? '' : '-rotate-90'"></i>
+                    </button>
+                    <div x-show="open" class="space-y-1" style="display: none;">
+                        <a href="{{ route('admin.bintypes.index') }}" class="flex items-center gap-3 px-3 py-2 rounded-lg transition-all {{ request()->routeIs('admin.bintypes.*') ? 'bg-custom-primary text-white' : 'text-slate-300 hover:bg-white/10 hover:text-white' }}">
+                            <i class="fa-solid fa-cubes w-5 text-center"></i>
+                            <span class="text-sm font-medium">Tipos de Contenedores</span>
+                        </a>
+                        <a href="{{ route('admin.settings.index') }}" class="flex items-center gap-3 px-3 py-2 rounded-lg transition-all {{ request()->routeIs('admin.settings.*') ? 'bg-custom-primary text-white' : 'text-slate-300 hover:bg-white/10 hover:text-white' }}">
+                            <i class="fa-solid fa-gears w-5 text-center"></i>
+                            <span class="text-sm font-medium">Marca & Sistema</span>
+                        </a>
+                        <a href="{{ route('admin.users.index') }}" class="flex items-center gap-3 px-3 py-2 rounded-lg transition-all {{ request()->routeIs('admin.users.*') ? 'bg-custom-primary text-white' : 'text-slate-300 hover:bg-white/10 hover:text-white' }}">
+                            <i class="fa-solid fa-users-gear w-5 text-center"></i>
+                            <span class="text-sm font-medium">Usuarios</span>
+                        </a>
+                    </div>
+                </div>
             @endif
 
         </nav>
@@ -355,7 +431,10 @@
             if (dropdown && !dropdown.classList.contains('hidden')) dropdown.classList.add('hidden');
         }
     }
-    lucide.createIcons();
+    // Verificación de seguridad para lucide
+    if (typeof lucide !== 'undefined') {
+        lucide.createIcons();
+    }
 </script>
 @yield('scripts')
 </body>

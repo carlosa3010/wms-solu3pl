@@ -29,8 +29,9 @@ class AuthController extends Controller
             // --- REDIRECCIÓN INTELIGENTE POR ROL ---
             $user = Auth::user();
 
-            // 1. Si es Administrador
-            if ($user->role === 'admin') {
+            // 1. Si es Personal Administrativo (Admin, Manager, Supervisor)
+            // Se agrupan estos roles para que accedan al Dashboard principal
+            if (in_array($user->role, ['admin', 'manager', 'supervisor'])) {
                 return redirect()->route('admin.dashboard');
             }
             
@@ -39,8 +40,7 @@ class AuthController extends Controller
                 return redirect()->route('warehouse.station');
             }
 
-            // 3. Si es Cliente
-            // (Asumiremos que cualquier otro rol o 'user' es cliente)
+            // 3. Si es Cliente (role 'user' o cualquier otro no definido)
             return redirect()->route('client.portal');
         }
 

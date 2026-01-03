@@ -20,39 +20,44 @@ class UserController extends Controller
         $users = User::with('client')->orderBy('created_at', 'desc')->paginate(10);
         $clients = Client::orderBy('company_name')->get();
         
-        // Módulos disponibles para asignar permisos a Managers/Supervisores
+        // LISTA COMPLETA DE MÓDULOS DEL SISTEMA
+        // Agregada sección de infraestructura que faltaba
         $availableModules = [
-            'dashboard' => 'Panel de Control',
-            'inventory' => 'Inventario',
-            'orders'    => 'Pedidos',
-            'receptions'=> 'Recepciones',
-            'billing'   => 'Facturación',
-            'settings'  => 'Configuración'
+            'dashboard'      => 'Panel de Control',
+            'crm'            => 'CRM & Clientes',
+            'products'       => 'Catálogo de Productos',
+            'inventory'      => 'Inventario (Stock/Movimientos)',
+            'infrastructure' => 'Infraestructura (Bodegas/Sucursales)', // RESTAURADO
+            'maps'           => 'Infraestructura: Mapa y Cobertura',    // RESTAURADO
+            'receptions'     => 'Operaciones: Recepciones',
+            'orders'         => 'Operaciones: Pedidos',
+            'shipping'       => 'Operaciones: Envíos',
+            'transfers'      => 'Operaciones: Transferencias',
+            'rma'            => 'Operaciones: Devoluciones (RMA)',
+            'billing'        => 'Facturación',
+            'users'          => 'Seguridad y Usuarios',
+            'settings'       => 'Configuración del Sistema'
         ];
 
         return view('admin.users.index', compact('users', 'clients', 'availableModules'));
     }
 
     /**
-     * Guarda un nuevo usuario y genera contraseña automática.
+     * Guarda un nuevo usuario.
      */
     public function store(Request $request)
     {
         $validated = $request->validate([
             'name'      => 'required|string|max:255',
             'email'     => 'required|email|max:255|unique:users,email',
-            // CORRECCIÓN: Se cambió 'client' por 'user'
             'role'      => 'required|in:admin,manager,supervisor,operator,user',
-            // CORRECCIÓN: El client_id es requerido si el rol es 'user'
             'client_id' => 'nullable|required_if:role,user|exists:clients,id',
             'status'    => 'required|in:active,inactive',
             'modules'   => 'nullable|array'
         ]);
 
-        // 1. Generar contraseña aleatoria
         $generatedPassword = Str::random(12);
 
-        // 2. Crear usuario
         $user = User::create([
             'name'        => $validated['name'],
             'email'       => $validated['email'],
@@ -63,20 +68,18 @@ class UserController extends Controller
             'permissions' => $validated['modules'] ?? [], 
         ]);
 
-        // 3. Retornar con mensaje Flash conteniendo la contraseña
         return redirect()->route('admin.users.index')
             ->with('success', "Usuario creado exitosamente.\n\nCREDENCIALES:\nEmail: {$validated['email']}\nContraseña: {$generatedPassword}");
     }
 
     /**
-     * Actualiza un usuario existente.
+     * Actualiza un usuario.
      */
     public function update(Request $request, User $user)
     {
         $validated = $request->validate([
             'name'      => 'required|string|max:255',
             'email'     => ['required', 'email', 'max:255', Rule::unique('users')->ignore($user->id)],
-            // CORRECCIÓN: Se cambió 'client' por 'user'
             'role'      => 'required|in:admin,manager,supervisor,operator,user',
             'client_id' => 'nullable|required_if:role,user|exists:clients,id',
             'status'    => 'required|in:active,inactive',
@@ -92,7 +95,7 @@ class UserController extends Controller
             'permissions' => $validated['modules'] ?? [],
         ]);
 
-        return redirect()->route('admin.users.index')->with('success', 'Perfil de usuario actualizado correctamente.');
+        return redirect()->route('admin.users.index')->with('success', 'Perfil actualizado correctamente.');
     }
 
     /**
@@ -101,11 +104,11 @@ class UserController extends Controller
     public function destroy(User $user)
     {
         $user->delete();
-        return redirect()->route('admin.users.index')->with('success', 'Usuario eliminado permanentemente.');
+        return redirect()->route('admin.users.index')->with('success', 'Usuario eliminado.');
     }
 
     /**
-     * Restablece la contraseña de un usuario y la muestra.
+     * Restablece contraseña.
      */
     public function resetPassword($id)
     {
@@ -117,6 +120,6 @@ class UserController extends Controller
         ]);
 
         return redirect()->route('admin.users.index')
-            ->with('success', "Contraseña restablecida para {$user->name}.\n\nNUEVA CONTRASEÑA: {$newPassword}");
+            ->with('success', "Nueva contraseña generada para {$user->name}.\n\nCLAVE: {$newPassword}");
     }
 }

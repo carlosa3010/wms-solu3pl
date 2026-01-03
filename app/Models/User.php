@@ -14,6 +14,7 @@ class User extends Authenticatable
     /**
      * Los atributos que son asignables masivamente.
      * Se incluye 'permissions' para el manejo de módulos del Supervisor.
+     * Se incluye 'status' para manejar el estado activo/inactivo del usuario.
      */
     protected $fillable = [
         'name',
@@ -21,6 +22,7 @@ class User extends Authenticatable
         'password',
         'client_id',
         'role',
+        'status', // AGREGADO: Importante para que el update/create funcione
         'permissions',
         'can_manage_billing',
         'can_manage_users',

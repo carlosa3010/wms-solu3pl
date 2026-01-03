@@ -97,19 +97,30 @@ Route::middleware(['auth'])->group(function () {
             
             Route::get('/get-sources', [InventoryController::class, 'getSources'])->name('admin.inventory.get_sources');
             Route::get('/get-bins', [InventoryController::class, 'getBins'])->name('admin.inventory.get_bins');
+            
+            // Esta ruta carga el mapa/infraestructura
             Route::get('/map', [WarehouseManagementController::class, 'index'])->name('admin.inventory.map');
         });
 
-        // Módulo: Infraestructura
-        Route::get('/coverage', [WarehouseManagementController::class, 'coverage'])->name('admin.inventory.coverage');
+        // Módulo: Infraestructura (Sucursales y Bodegas)
+        // FIX: Agregamos la ruta index para sucursales apuntando al mismo controlador
+        Route::get('/branches', [WarehouseManagementController::class, 'index'])->name('admin.branches.index');
+        // FIX: Alias para bodegas por si se requiere redirección
+        Route::get('/warehouses', [WarehouseManagementController::class, 'index'])->name('admin.warehouses.index');
+
+        // FIX: Renombrada de 'admin.inventory.coverage' a 'admin.coverage.index' para solucionar el error
+        Route::get('/coverage', [WarehouseManagementController::class, 'coverage'])->name('admin.coverage.index');
         Route::put('/branches/{id}/coverage', [WarehouseManagementController::class, 'updateCoverage'])->name('admin.branches.coverage');
+        
         Route::get('/rack-details', [WarehouseManagementController::class, 'getRackDetails'])->name('admin.inventory.rack_details');
         Route::post('/save-rack', [WarehouseManagementController::class, 'saveRackDetails'])->name('admin.inventory.save_rack');
 
+        // CRUD Sucursales (Sin resource para mayor control manual según tu código)
         Route::post('/branches', [WarehouseManagementController::class, 'storeBranch'])->name('admin.branches.store');
         Route::put('/branches/{id}', [WarehouseManagementController::class, 'updateBranch'])->name('admin.branches.update');
         Route::delete('/branches/{id}', [WarehouseManagementController::class, 'destroyBranch'])->name('admin.branches.destroy');
         
+        // CRUD Bodegas
         Route::post('/warehouses', [WarehouseManagementController::class, 'storeWarehouse'])->name('admin.warehouses.store');
         Route::put('/warehouses/{id}', [WarehouseManagementController::class, 'updateWarehouse'])->name('admin.warehouses.update');
         Route::delete('/warehouses/{id}', [WarehouseManagementController::class, 'destroyWarehouse'])->name('admin.warehouses.destroy');
