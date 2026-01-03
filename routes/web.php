@@ -18,7 +18,7 @@ use App\Http\Controllers\ShippingController;
 use App\Http\Controllers\TransferController;
 use App\Http\Controllers\BillingController;
 use App\Http\Controllers\RMAController;
-// Importación del nuevo controlador de clientes
+use App\Http\Controllers\UserController;
 use App\Http\Controllers\Client\ClientPortalController;
 
 /*
@@ -115,7 +115,7 @@ Route::middleware(['auth'])->group(function () {
         Route::delete('/warehouses/{id}', [WarehouseManagementController::class, 'destroyWarehouse'])->name('admin.warehouses.destroy');
         Route::get('/warehouses/{id}/labels', [WarehouseManagementController::class, 'printLabels'])->name('admin.warehouses.labels');
 
-        // Módulo: Operaciones de Entrada
+        // Módulo: Operaciones
         Route::prefix('receptions')->group(function () {
             Route::get('/', [ReceptionController::class, 'index'])->name('admin.receptions.index');
             Route::get('/create', [ReceptionController::class, 'create'])->name('admin.receptions.create');
@@ -125,7 +125,6 @@ Route::middleware(['auth'])->group(function () {
             Route::get('/{id}/labels', [ReceptionController::class, 'printLabels'])->name('admin.receptions.labels');
         });
 
-        // Módulo: Operaciones de Salida
         Route::prefix('orders')->group(function () {
             Route::get('/', [OrderController::class, 'index'])->name('admin.orders.index');
             Route::get('/create', [OrderController::class, 'create'])->name('admin.orders.create');
@@ -136,7 +135,6 @@ Route::middleware(['auth'])->group(function () {
             Route::get('/{id}/picking-list', [OrderController::class, 'printPickingList'])->name('admin.orders.picking');
         });
 
-        // Módulo: Despachos
         Route::prefix('shipping')->group(function () {
             Route::get('/', [ShippingController::class, 'index'])->name('admin.shipping.index');
             Route::get('/{id}/process', [ShippingController::class, 'process'])->name('admin.shipping.process');
@@ -144,7 +142,6 @@ Route::middleware(['auth'])->group(function () {
             Route::get('/{id}/manifest', [ShippingController::class, 'printManifest'])->name('admin.shipping.manifest');
         });
 
-        // Módulo: Traslados
         Route::prefix('transfers')->group(function () {
             Route::get('/', [TransferController::class, 'index'])->name('admin.transfers.index');
             Route::get('/create', [TransferController::class, 'create'])->name('admin.transfers.create');
@@ -152,7 +149,6 @@ Route::middleware(['auth'])->group(function () {
             Route::get('/{reference}/manifest', [TransferController::class, 'printManifest'])->name('admin.transfers.manifest');
         });
 
-        // Módulo: RMA (Logística Inversa)
         Route::prefix('rma')->group(function () {
             Route::get('/', [RMAController::class, 'index'])->name('admin.rma.index');
             Route::get('/create', [RMAController::class, 'create'])->name('admin.rma.create');
@@ -182,27 +178,29 @@ Route::middleware(['auth'])->group(function () {
             Route::delete('/bins/{id}', [BinTypeController::class, 'destroy'])->name('admin.bintypes.destroy');
         });
 
-        Route::get('/users', [DashboardController::class, 'adminDashboard'])->name('admin.users.index');
+        // Módulo: Usuarios (Control de Roles y Permisos)
+        Route::prefix('users')->group(function () {
+            Route::get('/', [UserController::class, 'index'])->name('admin.users.index');
+            Route::post('/', [UserController::class, 'store'])->name('admin.users.store');
+            Route::put('/{user}', [UserController::class, 'update'])->name('admin.users.update');
+            Route::delete('/{user}', [UserController::class, 'destroy'])->name('admin.users.destroy');
+            Route::patch('/{user}/reset-password', [UserController::class, 'resetPassword'])->name('admin.users.reset_password');
+        });
     });
 
     // ==========================================
     // PORTAL DE CLIENTES (portal/)
     // ==========================================
     Route::prefix('portal')->name('client.')->group(function () {
-        
-        // Dashboard y Resumen de Corte de Cuenta
         Route::get('/dashboard', [ClientPortalController::class, 'dashboard'])->name('portal');
 
-        // Módulo: Catálogo de Productos del Cliente
         Route::prefix('catalog')->group(function () {
             Route::get('/', [ClientPortalController::class, 'catalog'])->name('catalog');
             Route::post('/store', [ClientPortalController::class, 'storeSku'])->name('catalog.store');
         });
 
-        // Módulo: Stock Actual (Desglose por Bodega/Sucursal)
         Route::get('/stock', [ClientPortalController::class, 'stock'])->name('stock');
 
-        // Módulo: Avisos de Envío (ASN)
         Route::prefix('asn')->group(function () {
             Route::get('/', [ClientPortalController::class, 'asnIndex'])->name('asn.index');
             Route::get('/create', [ClientPortalController::class, 'createAsn'])->name('asn.create');
@@ -210,21 +208,18 @@ Route::middleware(['auth'])->group(function () {
             Route::get('/{id}', [ClientPortalController::class, 'showAsn'])->name('asn.show');
         });
 
-        // Módulo: Pedidos Manuales (Orders)
         Route::prefix('orders')->group(function () {
             Route::get('/', [ClientPortalController::class, 'ordersIndex'])->name('orders.index');
             Route::get('/create', [ClientPortalController::class, 'createOrder'])->name('orders.create');
             Route::post('/', [ClientPortalController::class, 'storeOrder'])->name('orders.store');
         });
 
-        // Módulo: RMA (Logística Inversa - Autorización del Cliente)
         Route::prefix('rma')->group(function () {
             Route::get('/', [ClientPortalController::class, 'rmaIndex'])->name('rma');
             Route::get('/{id}', [ClientPortalController::class, 'showRma'])->name('rma.show');
             Route::patch('/{id}/status', [ClientPortalController::class, 'updateRmaStatus'])->name('rma.status');
         });
 
-        // Módulo: Finanzas (Prefacturas)
         Route::prefix('billing')->group(function () {
             Route::get('/', [ClientPortalController::class, 'billing'])->name('billing.index');
             Route::get('/download-preinvoice', [ClientPortalController::class, 'downloadPreInvoice'])->name('billing.download');
