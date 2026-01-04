@@ -28,7 +28,7 @@
             </div>
             <div class="flex gap-2">
                 <a id="printWhLabelsBtn" href="#" target="_blank" class="hidden text-[10px] font-black uppercase tracking-widest text-slate-600 bg-white border border-slate-300 px-3 py-2 rounded-lg hover:bg-slate-50 transition flex items-center gap-2">
-                    <i class="fa-solid fa-print"></i> Rotular
+                    <i class="fa-solid fa-print"></i> Rotular Bodega
                 </a>
                 <a href="{{ route('admin.branches.index') }}" class="text-[10px] font-black uppercase tracking-widest text-white bg-slate-800 px-4 py-2 rounded-lg hover:bg-slate-700 transition flex items-center gap-2 shadow-sm">
                     <i class="fa-solid fa-arrow-left"></i> Volver
@@ -138,7 +138,9 @@
                         <div class="bg-indigo-50 p-3 rounded-xl border border-indigo-100">
                             <div class="flex justify-between items-center mb-1">
                                 <label class="text-[9px] font-black text-indigo-400 uppercase tracking-widest">Vista Previa (Nomenclatura)</label>
-                                <span class="text-[9px] font-bold text-indigo-600 bg-white px-1.5 rounded border border-indigo-100">Ej: Nivel 1</span>
+                                <span class="text-[8px] font-bold text-indigo-500 bg-white px-2 py-0.5 rounded-full border border-indigo-100">
+                                    Límite: <span id="max-levels-display">0</span> Niveles
+                                </span>
                             </div>
                             <div id="nomenclature-preview" class="font-mono text-xs font-black text-indigo-700 bg-white px-3 py-2 rounded-lg border border-indigo-200 text-center shadow-sm tracking-wide">
                                 ---
@@ -160,7 +162,7 @@
                             </div>
 
                             <div class="mt-4 flex gap-2">
-                                <button type="button" onclick="addLevel()" class="flex-1 py-2.5 border border-dashed border-slate-300 text-slate-500 rounded-xl text-[10px] font-black uppercase hover:bg-slate-50 hover:text-indigo-600 hover:border-indigo-300 transition-all flex items-center justify-center gap-2">
+                                <button type="button" id="btn-add-level" onclick="addLevel()" class="flex-1 py-2.5 border border-dashed border-slate-300 text-slate-500 rounded-xl text-[10px] font-black uppercase hover:bg-slate-50 hover:text-indigo-600 hover:border-indigo-300 transition-all flex items-center justify-center gap-2">
                                     <i class="fa-solid fa-plus bg-slate-200 text-slate-500 rounded-full p-0.5 w-4 h-4 flex items-center justify-center text-[8px]"></i>
                                     Agregar Nivel
                                 </button>
@@ -172,7 +174,6 @@
                     </div>
 
                     <div class="p-4 border-t border-slate-100 bg-slate-50 shrink-0">
-                        <!-- FIX: ID Agregado para selección JS -->
                         <button id="btn-save-rack" onclick="document.getElementById('rack-config-form').requestSubmit()" class="w-full py-3 bg-indigo-600 text-white rounded-xl font-black text-[10px] uppercase tracking-widest shadow-lg shadow-indigo-500/30 hover:bg-indigo-700 hover:scale-[1.02] transition-all flex items-center justify-center gap-2">
                             <i class="fa-solid fa-save"></i> Guardar Estructura
                         </button>
@@ -400,7 +401,7 @@
     // Variables Globales
     let currentWhId = null;
     let currentWhCode = null;
-    let currentWhDefaultLevelsCount = 1; // FIX: Variable para almacenar la configuración de la bodega
+    let currentWhDefaultLevelsCount = 1;
     let currentAisle = null;
     let currentSide = null;
     let currentRack = null;
@@ -505,14 +506,14 @@
     function loadMap(id, name, code, aisles, racksPerSide, levels) {
         currentWhId = id;
         currentWhCode = code;
-        currentWhDefaultLevelsCount = levels; // FIX: Guardamos los niveles por defecto de la bodega
+        currentWhDefaultLevelsCount = parseInt(levels); // Guardar el límite real de la bodega
 
         // UI Updates
         document.getElementById('empty-map-state').classList.add('hidden');
         document.getElementById('map-header').classList.remove('hidden');
         document.getElementById('map-container').classList.remove('hidden');
         
-        // Reset Right Panel (Mostrar panel vacío)
+        // Reset Right Panel
         document.getElementById('rack-config-panel').classList.remove('hidden');
         document.getElementById('empty-panel-state').classList.remove('hidden');
         document.getElementById('panel-content').classList.add('hidden');
@@ -520,6 +521,7 @@
         // Header Info
         document.getElementById('current-warehouse-name').innerText = name;
         document.getElementById('current-warehouse-details').innerText = `${code} | ${aisles} PASILLOS | ${racksPerSide} RACKS/LADO | ${levels} NIVELES/RACK`;
+        document.getElementById('max-levels-display').innerText = levels;
 
         // Update Labels Button
         const printBtn = document.getElementById('printWhLabelsBtn');
@@ -589,7 +591,7 @@
 
         try {
             // Intenta cargar la configuración existente del rack desde la DB
-             const res = await fetch(`/admin/warehouses/rack-details?warehouse_id=${currentWhId}&aisle=${aisle}&side=${side}&rack_col=${col}`);
+             const res = await fetch(`{{ route('admin.warehouses.rack_details') }}?warehouse_id=${currentWhId}&aisle=${aisle}&side=${side}&rack_col=${col}`);
              if(res.ok) {
                  const data = await res.json();
                  
@@ -601,15 +603,17 @@
                     // Si NO hay configuración en DB (es nuevo), generar estructura basada en la configuración global de la Bodega
                     currentLevels = [];
                     for(let i=0; i < currentWhDefaultLevelsCount; i++) {
-                        // Por defecto 3 bines, o 1. Usaremos 3 como base estándar editable.
-                        currentLevels.push({ bins: 3, type: null }); 
+                        // Por defecto asignamos el primer tipo de bin si existe, o null
+                        const defaultType = binTypes.length > 0 ? binTypes[0].id : null;
+                        currentLevels.push({ bins: 3, type: defaultType });
                     }
                  }
              } else {
                  // Error de red o 404, usar default de la bodega
                  currentLevels = [];
                  for(let i=0; i < currentWhDefaultLevelsCount; i++) {
-                     currentLevels.push({ bins: 3, type: null }); 
+                     const defaultType = binTypes.length > 0 ? binTypes[0].id : null;
+                     currentLevels.push({ bins: 3, type: defaultType });
                  }
              }
 
@@ -620,7 +624,8 @@
             // Fallback en error: Usar configuración de bodega
             currentLevels = [];
             for(let i=0; i < currentWhDefaultLevelsCount; i++) {
-                currentLevels.push({ bins: 3, type: null }); 
+                const defaultType = binTypes.length > 0 ? binTypes[0].id : null;
+                currentLevels.push({ bins: 3, type: defaultType });
             }
             renderLevelsForm();
         } finally {
@@ -648,9 +653,10 @@
             div.className = "bg-slate-50 border border-slate-200 p-2.5 rounded-lg animate-in fade-in slide-in-from-left-2 duration-200";
             
             // Opciones de Tipos de Bin
-            let options = `<option value="">Estándar</option>`;
+            let options = '';
             binTypes.forEach(bt => {
-                options += `<option value="${bt.id}" ${level.type == bt.id ? 'selected' : ''}>${bt.name} (${bt.width}x${bt.height}x${bt.depth})</option>`;
+                const selected = level.type == bt.id ? 'selected' : '';
+                options += `<option value="${bt.id}" ${selected}>${bt.name} (${bt.width}x${bt.height}x${bt.depth})</option>`;
             });
 
             div.innerHTML = `
@@ -679,12 +685,32 @@
         });
 
         document.getElementById('total-positions-badge').innerText = `${totalPositions} Posiciones`;
+        
+        // Controlar visibilidad del botón agregar según límites de bodega
+        const addBtn = document.getElementById('btn-add-level');
+        if (currentLevels.length >= currentWhDefaultLevelsCount) {
+            addBtn.classList.add('opacity-50', 'cursor-not-allowed');
+            addBtn.title = "Límite de niveles alcanzado";
+        } else {
+            addBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+            addBtn.title = "Agregar Nivel";
+        }
+
         updateNomenclaturePreview();
     }
 
     function addLevel() {
+        if (currentLevels.length >= currentWhDefaultLevelsCount) {
+            alert('No se pueden agregar más niveles. El límite de la bodega es ' + currentWhDefaultLevelsCount);
+            return;
+        }
+        
         const lastLevel = currentLevels[currentLevels.length - 1];
-        currentLevels.push({ bins: lastLevel ? lastLevel.bins : 3, type: lastLevel ? lastLevel.type : null });
+        // Si hay un nivel anterior, copiamos su tipo, si no, usamos el primero de la lista
+        const defaultType = binTypes.length > 0 ? binTypes[0].id : null;
+        const newType = lastLevel ? lastLevel.type : defaultType;
+
+        currentLevels.push({ bins: lastLevel ? lastLevel.bins : 3, type: newType });
         renderLevelsForm();
     }
 
@@ -711,7 +737,7 @@
         const n = "01";
         const b = "01";
         
-        const preview = `${currentWhCode}-${p}-${s}-${r}-${n}-${b}`;
+        const preview = `${currentWhCode}-P${p}-${s}-R${r}-N${n}-B${b}`;
         document.getElementById('nomenclature-preview').innerText = preview;
     }
 
@@ -747,7 +773,10 @@
                 body: JSON.stringify(payload)
             });
 
-            if (!response.ok) throw new Error('Error en la respuesta del servidor');
+            if (!response.ok) {
+                 const errData = await response.json();
+                 throw new Error(errData.error || errData.message || 'Error en la respuesta del servidor');
+            }
 
             const result = await response.json();
             
@@ -759,7 +788,7 @@
 
         } catch (error) {
             console.error(error);
-            alert('Error al guardar la configuración del rack');
+            alert('Error al guardar: ' + error.message);
         } finally {
             btn.innerHTML = originalText;
             btn.disabled = false;
