@@ -19,7 +19,7 @@ class WarehouseManagementController extends Controller
      * Esta ruta responde tanto al botón "Sucursales y Bodegas" como a "Mapa de Bodegas"
      * en el sidebar, diferenciándose por el parámetro ?view=map en la URL.
      */
-    public function index()
+    public function index(Request $request)
     {
         // 1. Cargar infraestructura completa con sus relaciones
         $branches = Branch::with('warehouses')->orderBy('name')->get();
@@ -186,74 +186,106 @@ class WarehouseManagementController extends Controller
             'rack_col' => 'required|integer'
         ]);
 
-        $searchPattern = sprintf("-P%02d-%s-R%02d-", $request->aisle, $request->side, $request->rack_col);
-        
         $locations = Location::where('warehouse_id', $request->warehouse_id)
-            ->where('code', 'like', "%{$searchPattern}%")
+            ->where('aisle', $request->aisle)
+            ->where('side', $request->side)
+            ->where('rack', $request->rack_col)
+            ->orderBy('shelf') // Nivel
+            ->orderBy('bin')   // Posición
             ->get();
 
-        $levelsConfig = [];
+        // Agrupar por nivel para determinar configuración
+        $levels = [];
         foreach ($locations as $loc) {
-            $level = $loc->shelf;
-            if (!isset($levelsConfig[$level])) {
-                $levelsConfig[$level] = [
-                    'level' => $level,
+            $lvl = $loc->shelf;
+            if (!isset($levels[$lvl])) {
+                $levels[$lvl] = [
                     'bins_count' => 0,
                     'bin_type_id' => $loc->bin_type_id
                 ];
             }
-            $levelsConfig[$level]['bins_count']++;
+            // Determinamos el número máximo de bin en este nivel
+            $levels[$lvl]['bins_count'] = max($levels[$lvl]['bins_count'], $loc->bin);
         }
 
-        return response()->json(['levels' => (object)$levelsConfig]);
+        return response()->json(['levels' => $levels]);
     }
 
-    public function saveRackDetails(Request $request)
+    public function saveRack(Request $request)
     {
-        $request->validate([
+        $validated = $request->validate([
             'warehouse_id' => 'required|exists:warehouses,id',
             'aisle' => 'required|integer',
-            'side' => 'required|string',
+            'side' => 'required|in:A,B',
             'rack_col' => 'required|integer',
-            'levels_config' => 'required|array'
+            'levels' => 'required|array'
         ]);
 
-        $wh = Warehouse::find($request->warehouse_id);
+        $warehouse = Warehouse::findOrFail($validated['warehouse_id']);
 
+        DB::beginTransaction();
         try {
-            DB::transaction(function () use ($request, $wh) {
-                $rackIdentifier = sprintf("-P%02d-%s-R%02d-", $request->aisle, $request->side, $request->rack_col);
-                
-                Location::where('warehouse_id', $wh->id)
-                    ->where('code', 'like', "%{$rackIdentifier}%")
-                    ->delete();
+            // ID's de ubicaciones que mantendremos/actualizaremos
+            $processedLocationIds = [];
 
-                foreach ($request->levels_config as $config) {
-                    $level = $config['level'];
-                    $qty = (int)$config['bins_count'];
-                    $typeId = $config['bin_type_id'] ?? null;
+            // Procesar cada nivel enviado desde el frontend
+            foreach ($validated['levels'] as $levelConfig) {
+                $levelNum = $levelConfig['level'];
+                $binsCount = $levelConfig['bins_count'];
+                $binTypeId = $levelConfig['bin_type_id'] ?? null;
 
-                    for ($b = 1; $b <= $qty; $b++) {
-                        $locCode = sprintf(
-                            "%s-P%02d-%s-R%02d-N%02d-B%02d",
-                            $wh->code, $request->aisle, $request->side, $request->rack_col, $level, $b
-                        );
+                for ($b = 1; $b <= $binsCount; $b++) {
+                    // Generar código de ubicación estandarizado: WH-P01-A-R01-N01-B01
+                    // Usamos str_pad para asegurar dos dígitos
+                    $code = sprintf(
+                        "%s-P%02d-%s-R%02d-N%02d-B%02d",
+                        $warehouse->code,
+                        $validated['aisle'],
+                        $validated['side'],
+                        $validated['rack_col'],
+                        $levelNum,
+                        $b
+                    );
 
-                        Location::create([
-                            'warehouse_id' => $wh->id,
-                            'code'         => $locCode,
-                            'aisle'        => $request->aisle,
-                            'rack'         => $request->rack_col,
-                            'shelf'        => $level,
-                            'bin_type_id'  => $typeId,
-                            'type'         => 'rack'
-                        ]);
-                    }
+                    // Buscar si existe (para mantener historial/ID) o crear
+                    $location = Location::updateOrCreate(
+                        [
+                            'warehouse_id' => $warehouse->id,
+                            'code' => $code
+                        ],
+                        [
+                            'branch_id' => $warehouse->branch_id,
+                            'aisle' => $validated['aisle'],
+                            'side' => $validated['side'],
+                            'rack' => $validated['rack_col'],
+                            'shelf' => $levelNum,
+                            'bin' => $b,
+                            'bin_type_id' => $binTypeId,
+                            'type' => 'picking', // Default: picking
+                            'status' => 'active' // Default: active
+                        ]
+                    );
+                    
+                    $processedLocationIds[] = $location->id;
                 }
-            });
-            return response()->json(['success' => true]);
+            }
+
+            // Eliminar ubicaciones que ya no existen en la nueva configuración para este rack específico
+            // (Ej: Si antes el nivel 1 tenía 5 bines y ahora se configuran 3, borramos los 2 sobrantes)
+            Location::where('warehouse_id', $warehouse->id)
+                ->where('aisle', $validated['aisle'])
+                ->where('side', $validated['side'])
+                ->where('rack', $validated['rack_col'])
+                ->whereNotIn('id', $processedLocationIds)
+                ->delete();
+
+            DB::commit();
+            return response()->json(['message' => 'Configuración guardada exitosamente']);
+
         } catch (\Exception $e) {
-            return response()->json(['error' => $e->getMessage()], 500);
+            DB::rollBack();
+            Log::error("Error guardando rack: " . $e->getMessage());
+            return response()->json(['message' => 'Error al guardar: ' . $e->getMessage()], 500);
         }
     }
 
@@ -265,6 +297,7 @@ class WarehouseManagementController extends Controller
         $warehouse = Warehouse::with(['branch', 'locations.binType'])->findOrFail($id);
         $labels = [];
 
+        // Etiqueta Principal de Bodega
         $labels[] = [
             'type' => 'WAREHOUSE',
             'title' => $warehouse->name,
@@ -273,8 +306,11 @@ class WarehouseManagementController extends Controller
             'qr_data' => $warehouse->code
         ];
 
+        // Agrupar ubicaciones para generar etiquetas jerárquicas
         $aisles = $warehouse->locations->groupBy('aisle');
+        
         foreach ($aisles as $aisleNum => $locsInAisle) {
+            // Etiqueta de Pasillo
             $labels[] = [
                 'type' => 'AISLE',
                 'title' => "PASILLO {$aisleNum}",
@@ -285,6 +321,7 @@ class WarehouseManagementController extends Controller
 
             $racks = $locsInAisle->groupBy('rack');
             foreach ($racks as $rackNum => $locsInRack) {
+                // Etiqueta de Rack
                 $labels[] = [
                     'type' => 'RACK',
                     'title' => "RACK {$rackNum}",
@@ -293,6 +330,7 @@ class WarehouseManagementController extends Controller
                     'qr_data' => $warehouse->code . "-P" . str_pad($aisleNum, 2, '0', STR_PAD_LEFT) . "-R" . str_pad($rackNum, 2, '0', STR_PAD_LEFT)
                 ];
 
+                // Etiquetas de Bin individuales
                 foreach ($locsInRack as $bin) {
                     $labels[] = [
                         'type' => 'BIN',

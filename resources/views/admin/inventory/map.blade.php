@@ -17,81 +17,185 @@
     {{-- ================================================================= --}}
     {{-- MODO MAPA INTERACTIVO: Visualización de Estructura Física         --}}
     {{-- ================================================================= --}}
-    <div class="flex flex-col h-full space-y-4">
-        <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex flex-col md:flex-row justify-between items-center gap-4">
+    <div class="flex flex-col h-[calc(100vh-140px)] space-y-4">
+        {{-- Barra Superior del Mapa --}}
+        <div class="bg-white p-3 rounded-xl shadow-sm border border-slate-200 flex flex-col md:flex-row justify-between items-center gap-4 shrink-0">
             <div>
-                <h2 class="font-black text-slate-700 flex items-center gap-2 text-base">
-                    <i class="fa-solid fa-layer-group text-custom-primary"></i> Planta Física y Almacenamiento
+                <h2 class="font-black text-slate-700 flex items-center gap-2 text-sm">
+                    <i class="fa-solid fa-map text-indigo-600"></i> Planta Física y Almacenamiento
                 </h2>
-                <p class="text-[9px] text-slate-400 font-bold uppercase tracking-widest">Navegación técnica de bines</p>
+                <p class="text-[10px] text-slate-400 font-bold uppercase tracking-widest pl-6">Navegación técnica de bines</p>
             </div>
             <div class="flex gap-2">
-                <a id="printWhLabelsBtn" href="#" target="_blank" class="hidden text-[9px] font-black uppercase tracking-widest text-slate-600 bg-white border border-slate-300 px-3 py-1.5 rounded-lg hover:bg-slate-50 transition flex items-center gap-2">
+                <a id="printWhLabelsBtn" href="#" target="_blank" class="hidden text-[10px] font-black uppercase tracking-widest text-slate-600 bg-white border border-slate-300 px-3 py-2 rounded-lg hover:bg-slate-50 transition flex items-center gap-2">
                     <i class="fa-solid fa-print"></i> Rotular
                 </a>
-                <a href="{{ route('admin.branches.index') }}" class="text-[9px] font-black uppercase tracking-widest text-white bg-slate-700 px-4 py-1.5 rounded-lg hover:bg-slate-800 transition flex items-center gap-2 shadow-sm">
+                <a href="{{ route('admin.branches.index') }}" class="text-[10px] font-black uppercase tracking-widest text-white bg-slate-800 px-4 py-2 rounded-lg hover:bg-slate-700 transition flex items-center gap-2 shadow-sm">
                     <i class="fa-solid fa-arrow-left"></i> Volver
                 </a>
             </div>
         </div>
 
-        <div class="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-4 min-h-0">
-            <!-- Navegador Lateral -->
-            <div class="lg:col-span-3 flex flex-col gap-3 overflow-y-auto pr-2 custom-scrollbar">
-                @foreach($branches as $branch)
-                    <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-                        <div class="p-2.5 bg-slate-50 border-b border-slate-200 font-black text-slate-600 text-[9px] uppercase tracking-widest flex items-center gap-2">
-                            <i class="fa-solid fa-building text-custom-primary"></i> {{ $branch->name }}
+        {{-- LAYOUT PRINCIPAL DEL MAPA (GRID 12 COLUMNAS) --}}
+        <div class="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-4 min-h-0 overflow-hidden">
+            
+            <!-- COLUMNA 1: Navegador Lateral (Lista de Bodegas) [3 COLS] -->
+            <div class="lg:col-span-3 flex flex-col gap-3 overflow-y-auto pr-1 custom-scrollbar bg-white rounded-xl shadow-sm border border-slate-200 h-full">
+                <div class="p-3 bg-slate-50 border-b border-slate-100 sticky top-0 z-10">
+                    <h3 class="text-[10px] font-black text-slate-400 uppercase tracking-widest">Sucursales Disponibles</h3>
+                </div>
+                
+                <div class="p-2 space-y-4">
+                    @foreach($branches as $branch)
+                        <div class="rounded-lg overflow-hidden">
+                            <div class="px-2 py-1.5 font-bold text-slate-700 text-xs flex items-center gap-2 mb-1">
+                                <i class="fa-solid fa-building text-indigo-500"></i> {{ $branch->name }}
+                            </div>
+                            <div class="space-y-1 ml-2 border-l-2 border-slate-100 pl-2">
+                                @foreach($branch->warehouses as $warehouse)
+                                    <button onclick="loadMap('{{ $warehouse->id }}', '{{ $warehouse->name }}', '{{ $warehouse->code }}', {{ $warehouse->rows }}, {{ $warehouse->cols }}, {{ $warehouse->levels ?? 1 }})" 
+                                            class="w-full text-left p-2 rounded-lg hover:bg-indigo-50 transition flex justify-between items-center group focus:bg-indigo-50 outline-none border border-transparent focus:border-indigo-200">
+                                            <div class="flex items-center gap-2">
+                                                <i class="fa-solid fa-warehouse text-slate-300 group-hover:text-indigo-500 text-xs"></i>
+                                                <div>
+                                                    <span class="text-[11px] font-bold text-slate-600 group-hover:text-indigo-700 block leading-tight">{{ $warehouse->name }}</span>
+                                                    <span class="text-[9px] text-slate-400 font-mono">{{ $warehouse->code }}</span>
+                                                </div>
+                                            </div>
+                                            <i class="fa-solid fa-chevron-right text-[9px] text-slate-300 group-hover:text-indigo-400 opacity-0 group-hover:opacity-100"></i>
+                                    </button>
+                                @endforeach
+                            </div>
                         </div>
-                        <div class="divide-y divide-slate-50">
-                            @foreach($branch->warehouses as $warehouse)
-                                <button onclick="loadMap('{{ $warehouse->id }}', '{{ $warehouse->name }}', '{{ $warehouse->code }}', {{ $warehouse->rows }}, {{ $warehouse->cols }}, {{ $warehouse->levels ?? 1 }})" 
-                                        class="w-full text-left p-3 hover:bg-blue-50 transition flex justify-between items-center group focus:bg-blue-100 outline-none border-l-4 border-transparent focus:border-custom-primary">
-                                    <div class="flex items-center gap-2.5">
-                                        <i class="fa-solid fa-warehouse text-slate-300 group-hover:text-custom-primary"></i>
-                                        <div>
-                                            <span class="text-xs font-bold text-slate-700 block leading-none">{{ $warehouse->name }}</span>
-                                            <span class="text-[9px] text-slate-400 font-mono">{{ $warehouse->code }}</span>
-                                        </div>
-                                    </div>
-                                    <i class="fa-solid fa-chevron-right text-[10px] text-slate-300"></i>
-                                </button>
-                            @endforeach
-                        </div>
-                    </div>
-                @endforeach
+                    @endforeach
+                </div>
             </div>
 
-            <!-- Canvas del Mapa -->
-            <div class="lg:col-span-9 bg-white rounded-2xl shadow-sm border border-slate-200 flex flex-col relative overflow-hidden bg-[radial-gradient(#e2e8f0_1px,transparent_1px)] [background-size:20px_20px]">
-                <div id="empty-map-state" class="absolute inset-0 flex flex-col items-center justify-center bg-white/80 z-10">
-                    <i class="fa-solid fa-map-location-dot text-3xl text-slate-200 mb-2 animate-pulse"></i>
-                    <h3 class="font-black text-slate-800 text-sm uppercase">Seleccione una Bodega</h3>
+            <!-- COLUMNA 2: Canvas del Mapa (Centro) [6 COLS] -->
+            <div class="lg:col-span-6 bg-slate-50 rounded-xl shadow-inner border border-slate-200 flex flex-col relative overflow-hidden group">
+                <!-- Estado Vacío -->
+                <div id="empty-map-state" class="absolute inset-0 flex flex-col items-center justify-center bg-white z-10">
+                    <div class="bg-indigo-50 p-6 rounded-full mb-4 animate-pulse">
+                        <i class="fa-solid fa-map-location-dot text-4xl text-indigo-300"></i>
+                    </div>
+                    <h3 class="font-black text-slate-700 text-sm uppercase tracking-wide">Seleccione una Bodega</h3>
+                    <p class="text-[10px] text-slate-400 mt-1">Navegue por el menú izquierdo para visualizar</p>
                 </div>
 
-                <div id="map-header" class="hidden p-4 border-b border-slate-100 flex justify-between items-center bg-white/95 z-20">
+                <!-- Cabecera del Mapa Activo -->
+                <div id="map-header" class="hidden absolute top-0 left-0 right-0 p-3 bg-white/90 backdrop-blur-sm border-b border-slate-200 flex justify-between items-center z-20 shadow-sm">
                     <div>
-                        <h3 id="current-warehouse-name" class="font-black text-slate-800 text-lg">Mapa</h3>
-                        <p id="current-warehouse-details" class="text-[9px] text-slate-400 font-bold uppercase tracking-[0.2em]">---</p>
+                        <h3 id="current-warehouse-name" class="font-black text-slate-700 text-sm">Mapa</h3>
+                        <p id="current-warehouse-details" class="text-[9px] text-slate-400 font-mono font-bold">---</p>
                     </div>
-                    <div class="flex gap-4 text-[9px] font-black text-slate-500 uppercase tracking-widest">
-                        <span class="flex items-center gap-1"><div class="w-2.5 h-2.5 bg-blue-600 rounded-sm"></div> Lado A</span>
-                        <span class="flex items-center gap-1"><div class="w-2.5 h-2.5 bg-indigo-600 rounded-sm"></div> Lado B</span>
+                    <div class="flex gap-3 text-[9px] font-black text-slate-500 uppercase tracking-widest bg-slate-100 px-3 py-1.5 rounded-full">
+                        <span class="flex items-center gap-1.5"><div class="w-2 h-2 bg-blue-500 rounded-full"></div> Lado A</span>
+                        <span class="flex items-center gap-1.5"><div class="w-2 h-2 bg-indigo-500 rounded-full"></div> Lado B</span>
                     </div>
                 </div>
 
-                <div id="map-container" class="hidden flex-1 overflow-auto p-8 custom-scrollbar">
-                    <div id="warehouse-layout" class="flex flex-col gap-8 mx-auto w-fit p-4 pb-40"></div>
+                <!-- Contenedor del Grid (Zoomable) -->
+                <div id="map-container" class="hidden flex-1 overflow-auto p-8 custom-scrollbar relative bg-[radial-gradient(#cbd5e1_1px,transparent_1px)] [background-size:20px_20px]">
+                    <div id="warehouse-layout" class="flex flex-col gap-6 mx-auto w-fit p-4 pb-40 transition-transform origin-top-left duration-200">
+                        <!-- El mapa se genera aquí vía JS -->
+                    </div>
+                </div>
+                
+                <!-- Loader -->
+                <div id="map-loader" class="hidden absolute inset-0 bg-white/80 z-50 flex items-center justify-center backdrop-blur-sm">
+                    <div class="flex flex-col items-center">
+                        <i class="fa-solid fa-circle-notch fa-spin text-indigo-500 text-2xl mb-2"></i>
+                        <span class="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Cargando Estructura...</span>
+                    </div>
                 </div>
             </div>
+
+            <!-- COLUMNA 3: Panel de Configuración de Rack (Derecha) [3 COLS] -->
+            <div id="rack-config-panel" class="hidden lg:col-span-3 bg-white rounded-xl shadow-xl border border-slate-200 flex flex-col overflow-hidden relative h-full animate-in slide-in-from-right duration-300">
+                <!-- Estado Vacío Panel -->
+                <div id="empty-panel-state" class="absolute inset-0 flex flex-col items-center justify-center bg-white z-10 p-6 text-center">
+                    <i class="fa-solid fa-arrow-pointer text-2xl text-slate-200 mb-3"></i>
+                    <p class="text-[11px] font-bold text-slate-400 uppercase leading-relaxed">Seleccione un rack en el mapa para ver sus detalles</p>
+                </div>
+
+                <!-- Contenido del Panel -->
+                <div id="panel-content" class="flex flex-col h-full hidden">
+                    <div class="p-4 bg-slate-800 text-white flex justify-between items-start shrink-0">
+                        <div>
+                            <h3 class="font-black text-xs uppercase tracking-wider flex items-center gap-2">
+                                <i class="fa-solid fa-sliders text-indigo-400"></i> Configuración
+                            </h3>
+                            <p id="panel-rack-id" class="text-[10px] text-slate-400 font-mono mt-1">RACK SELECCIONADO</p>
+                        </div>
+                        <button onclick="closeRackConfig()" class="text-slate-400 hover:text-white transition bg-slate-700/50 p-1 rounded hover:bg-slate-700">
+                            <i class="fa-solid fa-xmark text-sm"></i>
+                        </button>
+                    </div>
+
+                    <div class="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-5">
+                        
+                        {{-- Visor de Nomenclatura --}}
+                        <div class="bg-indigo-50 p-3 rounded-xl border border-indigo-100">
+                            <div class="flex justify-between items-center mb-1">
+                                <label class="text-[9px] font-black text-indigo-400 uppercase tracking-widest">Vista Previa (Nomenclatura)</label>
+                                <span class="text-[9px] font-bold text-indigo-600 bg-white px-1.5 rounded border border-indigo-100">Ej: Nivel 1</span>
+                            </div>
+                            <div id="nomenclature-preview" class="font-mono text-xs font-black text-indigo-700 bg-white px-3 py-2 rounded-lg border border-indigo-200 text-center shadow-sm tracking-wide">
+                                ---
+                            </div>
+                            <p class="text-[8px] text-indigo-400 mt-1.5 text-center leading-tight">
+                                Bodega • Pasillo • Lado • Rack • Nivel • Bin
+                            </p>
+                        </div>
+
+                        {{-- Formulario Dinámico --}}
+                        <form id="rack-config-form" onsubmit="saveRackConfig(event)">
+                            <div class="flex justify-between items-center mb-3">
+                                <h4 class="text-[10px] font-black text-slate-600 uppercase tracking-widest border-l-2 border-indigo-500 pl-2">Estructura Vertical</h4>
+                                <span id="total-positions-badge" class="bg-slate-100 text-slate-500 px-2 py-0.5 rounded text-[9px] font-bold border border-slate-200">0 Posiciones</span>
+                            </div>
+
+                            <div id="levels-container" class="space-y-3 min-h-[50px]">
+                                <!-- Los niveles se inyectan aquí con JS -->
+                            </div>
+
+                            <div class="mt-4 flex gap-2">
+                                <button type="button" onclick="addLevel()" class="flex-1 py-2.5 border border-dashed border-slate-300 text-slate-500 rounded-xl text-[10px] font-black uppercase hover:bg-slate-50 hover:text-indigo-600 hover:border-indigo-300 transition-all flex items-center justify-center gap-2">
+                                    <i class="fa-solid fa-plus bg-slate-200 text-slate-500 rounded-full p-0.5 w-4 h-4 flex items-center justify-center text-[8px]"></i>
+                                    Agregar Nivel
+                                </button>
+                                <button type="button" onclick="removeLevel()" class="w-10 py-2.5 border border-dashed border-slate-300 text-slate-400 rounded-xl hover:bg-rose-50 hover:text-rose-500 hover:border-rose-200 transition flex items-center justify-center" title="Quitar último nivel">
+                                    <i class="fa-solid fa-minus"></i>
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+
+                    <div class="p-4 border-t border-slate-100 bg-slate-50 shrink-0">
+                        <!-- FIX: ID Agregado para selección JS -->
+                        <button id="btn-save-rack" onclick="document.getElementById('rack-config-form').requestSubmit()" class="w-full py-3 bg-indigo-600 text-white rounded-xl font-black text-[10px] uppercase tracking-widest shadow-lg shadow-indigo-500/30 hover:bg-indigo-700 hover:scale-[1.02] transition-all flex items-center justify-center gap-2">
+                            <i class="fa-solid fa-save"></i> Guardar Estructura
+                        </button>
+                    </div>
+                </div>
+                
+                {{-- Loader del Panel --}}
+                <div id="rack-loader" class="hidden absolute inset-0 bg-white/80 z-20 flex items-center justify-center backdrop-blur-sm">
+                    <div class="flex flex-col items-center">
+                        <i class="fa-solid fa-circle-notch fa-spin text-indigo-500 text-2xl mb-2"></i>
+                        <span class="text-[9px] font-bold text-slate-400 uppercase">Cargando Rack...</span>
+                    </div>
+                </div>
+            </div>
+
         </div>
     </div>
 
 @else
-
     {{-- ================================================================= --}}
-    {{-- MODO GESTIÓN: Listado de Sucursales (TAMAÑO REDUCIDO)              --}}
+    {{-- MODO GESTIÓN: Listado de Sucursales (Mantenido Igual)             --}}
     {{-- ================================================================= --}}
+    
     <div class="space-y-6">
         <div class="flex flex-col md:flex-row justify-between items-center gap-4 bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
             <div>
@@ -293,7 +397,20 @@
 
 @section('scripts')
 <script>
-    function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
+    // Variables Globales
+    let currentWhId = null;
+    let currentWhCode = null;
+    let currentWhDefaultLevelsCount = 1; // FIX: Variable para almacenar la configuración de la bodega
+    let currentAisle = null;
+    let currentSide = null;
+    let currentRack = null;
+    let currentLevels = [];
+    const binTypes = @json($binTypes ?? []);
+
+    // Funciones Modales (Gestión)
+    function closeModal(id) {
+        document.getElementById(id).classList.add('hidden');
+    }
 
     /**
      * AJAX: Carga de estados dinámica
@@ -324,15 +441,12 @@
         }
     }
 
-    /**
-     * Gestión de Sucursales
-     */
     function openBranchModal() {
         const form = document.getElementById('branchForm');
         form.reset();
         form.action = "{{ route('admin.branches.store') }}";
-        document.getElementById('branchMethod').value = "POST";
-        document.getElementById('branchModalTitle').innerText = "Nueva Sucursal";
+        document.getElementById('branchMethod').value = 'POST';
+        document.getElementById('branchModalTitle').innerText = 'Nueva Sucursal';
         document.getElementById('branchModal').classList.remove('hidden');
         document.getElementById('branchState').innerHTML = '<option value="">Seleccione país primero...</option>';
     }
@@ -347,21 +461,17 @@
         const countrySelect = document.getElementById('branchCountry');
         countrySelect.value = branch.country;
         
-        // CORRECCIÓN: Detectar ID y disparar AJAX para edición
         const countryOption = Array.from(countrySelect.options).find(o => o.value === branch.country);
         if (countryOption) {
             loadStates(countryOption.dataset.id, branch.state);
         }
 
         document.getElementById('branchForm').action = `/admin/branches/${branch.id}`;
-        document.getElementById('branchMethod').value = "PUT";
-        document.getElementById('branchModalTitle').innerText = "Editar Sucursal";
+        document.getElementById('branchMethod').value = 'PUT';
+        document.getElementById('branchModalTitle').innerText = 'Editar Sucursal';
         document.getElementById('branchModal').classList.remove('hidden');
     }
 
-    /**
-     * Gestión de Bodegas
-     */
     function openWarehouseModal(branchId) {
         const form = document.getElementById('whForm');
         form.reset();
@@ -386,38 +496,60 @@
     }
 
     /**
-     * Lógica de Mapa
+     * =========================================================
+     * LÓGICA DEL MAPA Y CONFIGURACIÓN DE RACKS
+     * =========================================================
      */
     @if(request('view') == 'map')
+
     function loadMap(id, name, code, aisles, racksPerSide, levels) {
+        currentWhId = id;
+        currentWhCode = code;
+        currentWhDefaultLevelsCount = levels; // FIX: Guardamos los niveles por defecto de la bodega
+
+        // UI Updates
         document.getElementById('empty-map-state').classList.add('hidden');
         document.getElementById('map-header').classList.remove('hidden');
         document.getElementById('map-container').classList.remove('hidden');
-        document.getElementById('current-warehouse-name').innerText = name;
-        document.getElementById('current-warehouse-details').innerText = `${code} | ${aisles} PASILLOS | ${levels} NIVELES`;
+        
+        // Reset Right Panel (Mostrar panel vacío)
+        document.getElementById('rack-config-panel').classList.remove('hidden');
+        document.getElementById('empty-panel-state').classList.remove('hidden');
+        document.getElementById('panel-content').classList.add('hidden');
 
+        // Header Info
+        document.getElementById('current-warehouse-name').innerText = name;
+        document.getElementById('current-warehouse-details').innerText = `${code} | ${aisles} PASILLOS | ${racksPerSide} RACKS/LADO | ${levels} NIVELES/RACK`;
+
+        // Update Labels Button
         const printBtn = document.getElementById('printWhLabelsBtn');
         printBtn.href = `/admin/warehouses/${id}/labels`;
         printBtn.classList.remove('hidden');
 
+        // Generate Grid
         const layout = document.getElementById('warehouse-layout');
         layout.innerHTML = ''; 
 
         for (let p = 1; p <= aisles; p++) {
             const aisleContainer = document.createElement('div');
-            aisleContainer.className = "flex flex-col bg-white p-6 rounded-[2.5rem] shadow-lg border border-slate-100 ring-4 ring-slate-50";
-            aisleContainer.innerHTML = `<div class="text-[9px] font-black text-slate-400 mb-4 uppercase tracking-[0.3em] text-center border-b pb-2 italic">Pasillo P-${p.toString().padStart(2,'0')}</div>`;
+            aisleContainer.className = "flex flex-col bg-white p-4 rounded-[2rem] shadow-md border border-slate-100 ring-2 ring-slate-50 transition-all hover:shadow-lg";
+            
+            // Header Pasillo
+            aisleContainer.innerHTML = `<div class="text-[9px] font-black text-slate-400 mb-3 uppercase tracking-[0.2em] text-center border-b border-slate-100 pb-1">Pasillo P-${p.toString().padStart(2,'0')}</div>`;
 
+            // Lado A
             const rowA = document.createElement('div');
-            rowA.className = "flex gap-1.5 justify-center mb-1.5";
+            rowA.className = "flex gap-1.5 justify-center mb-2";
             for (let c = 1; c <= racksPerSide; c++) rowA.appendChild(createRackCell(p, 'A', c));
             aisleContainer.appendChild(rowA);
 
+            // Camino Central (Visual)
             const path = document.createElement('div');
-            path.className = "h-10 bg-slate-100/50 border-y border-dashed border-slate-200 rounded-xl flex items-center justify-center mb-1.5 relative overflow-hidden";
-            path.innerHTML = '<div class="flex gap-10 opacity-5"><i class="fa-solid fa-arrow-right"></i><i class="fa-solid fa-arrow-right"></i></div>';
+            path.className = "h-8 bg-slate-50 border-y border-dashed border-slate-200 rounded-lg flex items-center justify-center mb-2 overflow-hidden";
+            path.innerHTML = '<div class="flex gap-8 opacity-10"><i class="fa-solid fa-chevron-right text-xs"></i><i class="fa-solid fa-chevron-right text-xs"></i></div>';
             aisleContainer.appendChild(path);
 
+            // Lado B
             const rowB = document.createElement('div');
             rowB.className = "flex gap-1.5 justify-center";
             for (let c = 1; c <= racksPerSide; c++) rowB.appendChild(createRackCell(p, 'B', c));
@@ -429,10 +561,209 @@
 
     function createRackCell(aisle, side, col) {
         const cell = document.createElement('div');
-        const colorClass = side === 'A' ? 'bg-blue-600 border-blue-700' : 'bg-indigo-600 border-indigo-700';
-        cell.className = `w-10 h-10 rounded-xl border ${colorClass} text-white flex items-center justify-center cursor-pointer transition-all hover:scale-125 shadow-md font-black font-mono text-[8px]`;
-        cell.innerHTML = `<span>${side}${col}</span>`;
+        const colorClass = side === 'A' ? 'bg-blue-500 border-blue-600 shadow-blue-200' : 'bg-indigo-500 border-indigo-600 shadow-indigo-200';
+        
+        cell.className = `w-8 h-8 rounded-lg border ${colorClass} text-white flex items-center justify-center cursor-pointer transition-all hover:scale-110 hover:z-10 shadow-sm font-black font-mono text-[9px] active:scale-95`;
+        cell.innerHTML = `<span>${col}</span>`;
+        cell.title = `Pasillo ${aisle} - Lado ${side} - Rack ${col}`;
+        
+        cell.onclick = () => openRackConfig(aisle, side, col);
+        
         return cell;
+    }
+
+    async function openRackConfig(aisle, side, col) {
+        currentAisle = aisle;
+        currentSide = side;
+        currentRack = col;
+
+        // UI Setup
+        document.getElementById('empty-panel-state').classList.add('hidden');
+        document.getElementById('panel-content').classList.remove('hidden');
+        document.getElementById('rack-loader').classList.remove('hidden');
+        
+        document.getElementById('panel-rack-id').innerText = `P${aisle.toString().padStart(2,'0')} - LADO ${side} - RACK ${col.toString().padStart(2,'0')}`;
+        
+        currentLevels = [];
+        renderLevelsForm();
+
+        try {
+            // Intenta cargar la configuración existente del rack desde la DB
+             const res = await fetch(`/admin/warehouses/rack-details?warehouse_id=${currentWhId}&aisle=${aisle}&side=${side}&rack_col=${col}`);
+             if(res.ok) {
+                 const data = await res.json();
+                 
+                 // FIX LÓGICA DB VS DEFAULT:
+                 // Si la DB retorna niveles configurados, úsalos.
+                 if(data.levels && data.levels.length > 0) {
+                     currentLevels = data.levels.map(l => ({ bins: l.bins_count, type: l.bin_type_id }));
+                 } else {
+                    // Si NO hay configuración en DB (es nuevo), generar estructura basada en la configuración global de la Bodega
+                    currentLevels = [];
+                    for(let i=0; i < currentWhDefaultLevelsCount; i++) {
+                        // Por defecto 3 bines, o 1. Usaremos 3 como base estándar editable.
+                        currentLevels.push({ bins: 3, type: null }); 
+                    }
+                 }
+             } else {
+                 // Error de red o 404, usar default de la bodega
+                 currentLevels = [];
+                 for(let i=0; i < currentWhDefaultLevelsCount; i++) {
+                     currentLevels.push({ bins: 3, type: null }); 
+                 }
+             }
+
+            renderLevelsForm();
+            
+        } catch (error) {
+            console.error('Error loading rack details:', error);
+            // Fallback en error: Usar configuración de bodega
+            currentLevels = [];
+            for(let i=0; i < currentWhDefaultLevelsCount; i++) {
+                currentLevels.push({ bins: 3, type: null }); 
+            }
+            renderLevelsForm();
+        } finally {
+            setTimeout(() => {
+                document.getElementById('rack-loader').classList.add('hidden');
+            }, 300);
+        }
+    }
+
+    function closeRackConfig() {
+        document.getElementById('empty-panel-state').classList.remove('hidden');
+        document.getElementById('panel-content').classList.add('hidden');
+    }
+
+    function renderLevelsForm() {
+        const container = document.getElementById('levels-container');
+        container.innerHTML = '';
+        let totalPositions = 0;
+        
+        currentLevels.forEach((level, index) => {
+            totalPositions += parseInt(level.bins);
+            const levelNum = index + 1;
+            
+            const div = document.createElement('div');
+            div.className = "bg-slate-50 border border-slate-200 p-2.5 rounded-lg animate-in fade-in slide-in-from-left-2 duration-200";
+            
+            // Opciones de Tipos de Bin
+            let options = `<option value="">Estándar</option>`;
+            binTypes.forEach(bt => {
+                options += `<option value="${bt.id}" ${level.type == bt.id ? 'selected' : ''}>${bt.name} (${bt.width}x${bt.height}x${bt.depth})</option>`;
+            });
+
+            div.innerHTML = `
+                <div class="flex justify-between items-center mb-1.5">
+                    <span class="text-[9px] font-black text-slate-500 uppercase flex items-center gap-1">
+                        <div class="w-1.5 h-1.5 rounded-full bg-indigo-400"></div> Nivel ${levelNum}
+                    </span>
+                </div>
+                <div class="grid grid-cols-5 gap-2">
+                    <div class="col-span-2">
+                        <label class="block text-[8px] text-slate-400 font-bold mb-0.5">BINES</label>
+                        <input type="number" min="1" max="20" value="${level.bins}" 
+                            onchange="updateLevelData(${index}, 'bins', this.value)"
+                            class="w-full px-2 py-1 bg-white border border-slate-200 rounded text-[10px] font-bold text-center focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none">
+                    </div>
+                    <div class="col-span-3">
+                        <label class="block text-[8px] text-slate-400 font-bold mb-0.5">TAMAÑO</label>
+                        <select onchange="updateLevelData(${index}, 'type', this.value)"
+                            class="w-full px-2 py-1 bg-white border border-slate-200 rounded text-[10px] font-bold focus:border-indigo-500 outline-none">
+                            ${options}
+                        </select>
+                    </div>
+                </div>
+            `;
+            container.appendChild(div);
+        });
+
+        document.getElementById('total-positions-badge').innerText = `${totalPositions} Posiciones`;
+        updateNomenclaturePreview();
+    }
+
+    function addLevel() {
+        const lastLevel = currentLevels[currentLevels.length - 1];
+        currentLevels.push({ bins: lastLevel ? lastLevel.bins : 3, type: lastLevel ? lastLevel.type : null });
+        renderLevelsForm();
+    }
+
+    function removeLevel() {
+        if(currentLevels.length > 0) {
+            currentLevels.pop();
+            renderLevelsForm();
+        }
+    }
+
+    function updateLevelData(index, field, value) {
+        currentLevels[index][field] = value;
+        if(field === 'bins') renderLevelsForm(); // Re-renderizar para actualizar total badge
+    }
+
+    function updateNomenclaturePreview() {
+        if (!currentWhCode) return;
+        
+        const p = currentAisle.toString().padStart(2,'0');
+        const s = currentSide;
+        const r = currentRack.toString().padStart(2,'0');
+        
+        // Ejemplo para Nivel 1, Bin 1
+        const n = "01";
+        const b = "01";
+        
+        const preview = `${currentWhCode}-${p}-${s}-${r}-${n}-${b}`;
+        document.getElementById('nomenclature-preview').innerText = preview;
+    }
+
+    async function saveRackConfig(e) {
+        e.preventDefault();
+        
+        // FIX: Usar getElementById porque el botón está fuera del form y e.submitter puede fallar
+        const btn = document.getElementById('btn-save-rack');
+        const originalText = btn.innerHTML;
+        btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Guardando...';
+        btn.disabled = true;
+
+        try {
+            const payload = {
+                warehouse_id: currentWhId,
+                aisle: currentAisle,
+                side: currentSide,
+                rack_col: currentRack,
+                levels: currentLevels.map((lvl, idx) => ({
+                    level: idx + 1,
+                    bins_count: parseInt(lvl.bins),
+                    bin_type_id: lvl.type
+                }))
+            };
+
+            const response = await fetch("{{ route('admin.warehouses.save_rack') }}", {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content'),
+                    'Accept': 'application/json'
+                },
+                body: JSON.stringify(payload)
+            });
+
+            if (!response.ok) throw new Error('Error en la respuesta del servidor');
+
+            const result = await response.json();
+            
+            const successDiv = document.createElement('div');
+            successDiv.className = "fixed bottom-4 right-4 bg-emerald-600 text-white px-4 py-2 rounded-lg shadow-lg text-xs font-bold animate-in slide-in-from-bottom-5 z-50";
+            successDiv.innerHTML = '<i class="fa-solid fa-check mr-2"></i> Configuración Guardada';
+            document.body.appendChild(successDiv);
+            setTimeout(() => successDiv.remove(), 3000);
+
+        } catch (error) {
+            console.error(error);
+            alert('Error al guardar la configuración del rack');
+        } finally {
+            btn.innerHTML = originalText;
+            btn.disabled = false;
+        }
     }
     @endif
 </script>
