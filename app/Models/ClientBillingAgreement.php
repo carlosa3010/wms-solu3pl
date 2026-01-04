@@ -2,29 +2,33 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
 class ClientBillingAgreement extends Model
 {
-    // Tabla que vincula Clientes con Perfiles de Cobro
-    protected $table = 'client_billing_agreements';
+    use HasFactory;
 
-    public $timestamps = false;
-
+    /**
+     * Atributos asignables de forma masiva.
+     */
     protected $fillable = [
         'client_id',
         'billing_profile_id',
         'start_date',
-        'end_date'
-    ];
-
-    protected $casts = [
-        'start_date' => 'date',
-        'end_date' => 'date',
+        'is_active'
     ];
 
     /**
-     * Relación: El acuerdo pertenece a un Cliente.
+     * Conversión de tipos.
+     */
+    protected $casts = [
+        'start_date' => 'date',
+        'is_active' => 'boolean'
+    ];
+
+    /**
+     * Relación: El acuerdo pertenece a un cliente.
      */
     public function client()
     {
@@ -32,9 +36,9 @@ class ClientBillingAgreement extends Model
     }
 
     /**
-     * Relación: El acuerdo utiliza un Perfil Tarifario específico.
+     * Relación: El acuerdo utiliza un perfil tarifario específico.
      */
-    public function profile()
+    public function billingProfile()
     {
         return $this->belongsTo(BillingProfile::class, 'billing_profile_id');
     }

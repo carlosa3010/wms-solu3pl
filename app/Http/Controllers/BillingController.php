@@ -8,7 +8,7 @@ use App\Models\BillingProfile;
 use App\Models\Invoice;
 use App\Models\ServiceCharge;
 use App\Models\ClientBillingAgreement;
-use App\Models\Payment; // Importante: Modelo de Pagos
+use App\Models\Payment; 
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Mail;
@@ -19,13 +19,11 @@ class BillingController extends Controller
 {
     /**
      * Muestra el panel principal de finanzas con KPIs y listado de facturas.
-     * Ruta: admin.billing.index
      */
     public function index()
     {
         $invoices = Invoice::with('client')->orderBy('created_at', 'desc')->paginate(15);
         
-        // Estadísticas financieras globales
         $stats = [
             'total_pending' => Invoice::where('status', 'unpaid')->sum('total_amount'),
             'collected_month' => Invoice::where('status', 'paid')
@@ -39,38 +37,42 @@ class BillingController extends Controller
 
     /**
      * Gestión de Tarifas: Visualiza perfiles existentes y acuerdos con clientes.
-     * Ruta: admin.billing.rates
      */
     public function rates()
     {
         $profiles = BillingProfile::all();
-        // Cargamos clientes con su acuerdo y el perfil asociado para ver quién tiene qué tarifa
+        // Cargamos clientes con su acuerdo y el perfil asociado
         $clients = Client::with('billingAgreement.profile')->get();
+        
+        // Cargamos los acuerdos explícitamente para asegurar su visualización en la tabla de la vista
+        $agreements = ClientBillingAgreement::with(['client', 'profile'])->get();
 
-        return view('admin.billing.rates', compact('profiles', 'clients'));
+        return view('admin.billing.rates', compact('profiles', 'clients', 'agreements'));
     }
 
     /**
-     * Crea un nuevo Perfil Tarifario (Plan de cobro).
+     * Crea un nuevo Perfil Tarifario con servicios extras incluidos.
      */
     public function storeProfile(Request $request)
     {
-        $validated = $request->validate([
-            'name' => 'required|string|max:100',
+        $request->validate([
+            'name' => 'required|string|max:100|unique:billing_profiles,name',
             'currency' => 'required|string|max:3',
             'storage_fee_per_bin_daily' => 'required|numeric|min:0',
             'picking_fee_base' => 'required|numeric|min:0',
             'inbound_fee_per_unit' => 'required|numeric|min:0',
+            'premium_packing_fee' => 'required|numeric|min:0', // Nuevo: Empaque Premium
+            'rma_handling_fee' => 'required|numeric|min:0',    // Nuevo: Manejo de RMA
         ]);
 
-        BillingProfile::create($validated);
+        BillingProfile::create($request->all());
 
         return back()->with('success', 'Perfil tarifario creado correctamente.');
     }
 
     /**
      * Vincula un cliente con un plan tarifario específico.
-     * Ruta: admin.billing.assign_agreement
+     * CORRECCIÓN: Manejo de errores y persistencia robusta.
      */
     public function assignAgreement(Request $request)
     {
@@ -80,24 +82,29 @@ class BillingController extends Controller
             'start_date' => 'required|date'
         ]);
 
-        ClientBillingAgreement::updateOrCreate(
-            ['client_id' => $request->client_id],
-            [
-                'billing_profile_id' => $request->billing_profile_id,
-                'start_date' => $request->start_date
-            ]
-        );
+        try {
+            // Actualizamos o creamos el acuerdo para el cliente
+            ClientBillingAgreement::updateOrCreate(
+                ['client_id' => $request->client_id],
+                [
+                    'billing_profile_id' => $request->billing_profile_id,
+                    'start_date' => $request->start_date,
+                    'is_active' => true // Aseguramos que el acuerdo esté activo al asignarse
+                ]
+            );
 
-        return back()->with('success', 'El cliente ahora está vinculado al plan tarifario.');
+            return back()->with('success', 'El perfil tarifario ha sido asignado al cliente exitosamente.');
+        } catch (\Exception $e) {
+            Log::error("Error al asignar perfil tarifario: " . $e->getMessage());
+            return back()->with('error', 'No se pudo completar la asignación: ' . $e->getMessage());
+        }
     }
 
     /**
-     * Genera la vista/PDF de la Pre-Factura basada en cargos acumulados no facturados.
-     * Ruta: admin.billing.pre_invoice
+     * Genera la vista/PDF de la Pre-Factura.
      */
     public function downloadPreInvoice($clientId)
     {
-        // Obtenemos al cliente con sus cargos pendientes de facturar
         $client = Client::with(['serviceCharges' => function($q) {
             $q->where('is_invoiced', false)->orderBy('charge_date', 'asc');
         }])->findOrFail($clientId);
@@ -105,19 +112,17 @@ class BillingController extends Controller
         $data = [
             'client'    => $client,
             'items'     => $client->serviceCharges,
-            'total'     => $client->accumulated_charges, // Atributo dinámico del modelo Client
+            'total'     => $client->accumulated_charges,
             'title'     => 'REPORTE DE SERVICIOS ACUMULADOS',
             'is_draft'  => true,
             'date'      => now()->format('d/m/Y')
         ];
 
-        // Retorna la vista optimizada para impresión (o PDF si la librería está instalada)
         return view('admin.billing.pdf_template', $data);
     }
 
     /**
-     * Muestra/Descarga una factura oficial ya emitida.
-     * Ruta: admin.billing.invoice.download
+     * Descarga factura oficial.
      */
     public function downloadInvoice($invoiceId)
     {
@@ -135,18 +140,15 @@ class BillingController extends Controller
     }
 
     /**
-     * Lógica programada (Simulación): Calcula el almacenamiento diario.
-     * Este método debería ejecutarse automáticamente cada noche vía Cron.
+     * Lógica de cobro diario automatizado.
      */
     public function runDailyBilling()
     {
-        // 1. Buscar todos los clientes con acuerdos activos
-        $agreements = ClientBillingAgreement::with(['client', 'profile'])->get();
+        $agreements = ClientBillingAgreement::with(['client', 'profile'])->where('is_active', true)->get();
 
         DB::transaction(function () use ($agreements) {
             foreach ($agreements as $agreement) {
-                // 2. Contar bines ocupados por este cliente hoy
-                // (Se asume una relación o consulta que cuente bines con stock del cliente)
+                // Contar bines ocupados por este cliente hoy
                 $occupiedBinsCount = DB::table('inventory')
                     ->join('products', 'inventory.product_id', '=', 'products.id')
                     ->where('products.client_id', $agreement->client_id)
@@ -156,7 +158,6 @@ class BillingController extends Controller
                 if ($occupiedBinsCount > 0) {
                     $amount = $occupiedBinsCount * $agreement->profile->storage_fee_per_bin_daily;
 
-                    // 3. Registrar el cargo de servicio
                     ServiceCharge::create([
                         'client_id'    => $agreement->client_id,
                         'type'         => 'storage',
@@ -170,40 +171,32 @@ class BillingController extends Controller
             }
         });
 
-        // 4. Lógica de generación de facturas y envío de correo
+        // Lógica de generación masiva de facturas
         $clientsToBill = Client::whereHas('serviceCharges', function($q) {
             $q->where('is_invoiced', false);
         })->get();
 
         foreach ($clientsToBill as $client) {
-            // Calcular total pendiente
             $pendingCharges = $client->serviceCharges()->where('is_invoiced', false)->get();
             $total = $pendingCharges->sum('amount');
 
             if ($total > 0) {
                 try {
                     DB::transaction(function () use ($client, $total, $pendingCharges) {
-                        // Crear Factura
                         $invoice = Invoice::create([
                             'client_id' => $client->id,
-                            'invoice_number' => 'INV-' . strtoupper(uniqid()), // Generador simple
+                            'invoice_number' => 'INV-' . strtoupper(uniqid()),
                             'total_amount' => $total,
                             'status' => 'unpaid',
-                            'due_date' => now()->addDays(30), // Vencimiento a 30 días
+                            'due_date' => now()->addDays(15),
                         ]);
 
-                        // Marcar cargos como facturados
                         foreach ($pendingCharges as $charge) {
                             $charge->update(['is_invoiced' => true, 'invoice_id' => $invoice->id]);
                         }
 
-                        // ENVIAR CORREO DE NOTIFICACIÓN
                         if ($client->email) {
-                            try {
-                                Mail::to($client->email)->send(new InvoiceGenerated($invoice));
-                            } catch (\Exception $e) {
-                                Log::error("Error enviando factura a {$client->email}: " . $e->getMessage());
-                            }
+                            Mail::to($client->email)->send(new InvoiceGenerated($invoice));
                         }
                     });
                 } catch (\Exception $e) {
@@ -212,13 +205,11 @@ class BillingController extends Controller
             }
         }
 
-        return back()->with('success', 'Cargos diarios calculados y facturas generadas correctamente. Las notificaciones han sido enviadas.');
+        return back()->with('success', 'Cargos diarios calculados y facturas generadas correctamente.');
     }
 
-    // --- NUEVOS MÉTODOS PARA GESTIÓN DE PAGOS ---
-
     /**
-     * Listado de pagos reportados por clientes
+     * Listado de pagos reportados.
      */
     public function paymentsIndex(Request $request)
     {
@@ -233,31 +224,19 @@ class BillingController extends Controller
         return view('admin.billing.payments_index', compact('payments'));
     }
 
-    /**
-     * Aprobar Pago
-     */
     public function approvePayment($id)
     {
         $payment = Payment::findOrFail($id);
-        
-        // Actualizar estado del pago
         $payment->status = 'approved';
         $payment->approved_at = now();
         $payment->save();
 
-        // Opcional: Actualizar el estado de las facturas relacionadas si aplica
-        // o crear un abono en cuenta. Esto depende de tu lógica de negocio exacta.
-
         return redirect()->back()->with('success', 'Pago acreditado correctamente.');
     }
 
-    /**
-     * Rechazar Pago
-     */
     public function rejectPayment($id)
     {
         $payment = Payment::findOrFail($id);
-        
         $payment->status = 'rejected';
         $payment->save();
 

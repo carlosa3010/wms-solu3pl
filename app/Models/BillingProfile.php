@@ -9,21 +9,18 @@ class BillingProfile extends Model
 {
     use HasFactory;
 
-    // Tabla definida en tu SQL
-    protected $table = 'billing_profiles';
-
-    // Desactivamos updated_at si no existe en tu tabla
-    public $timestamps = false;
-
+    /**
+     * Atributos asignables de forma masiva.
+     * Se añaden premium_packing_fee y rma_handling_fee para soportar servicios extra.
+     */
     protected $fillable = [
         'name',
         'currency',
         'storage_fee_per_bin_daily',
-        'storage_fee_per_cbm_daily',
         'picking_fee_base',
-        'picking_fee_extra',
         'inbound_fee_per_unit',
-        'created_at'
+        'premium_packing_fee', // Tarifa por empaque especial
+        'rma_handling_fee'     // Tarifa por procesamiento de devolución
     ];
 
     /**

@@ -1,123 +1,109 @@
 @extends('layouts.admin')
 
-@section('title', 'Tarifas y Contratos')
-@section('header_title', 'Configuración de Cobros')
-
 @section('content')
-<div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
-    
-    <!-- LADO IZQUIERDO: CREAR PERFIL -->
-    <div class="lg:col-span-1">
-        <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden sticky top-6">
-            <div class="p-5 bg-slate-50 border-b border-slate-100">
-                <h3 class="font-bold text-slate-700 flex items-center gap-2">
-                    <i class="fa-solid fa-file-invoice-dollar text-custom-primary"></i> Nuevo Perfil Tarifario
-                </h3>
-            </div>
-            <form action="{{ route('admin.billing.rates.store') }}" method="POST" class="p-6 space-y-4">
+<div class="space-y-8">
+    <div class="flex justify-between items-center">
+        <h2 class="text-2xl font-black text-slate-800">Tarifas de Servicios</h2>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        
+        <!-- Formulario Crear Perfil -->
+        <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+            <h3 class="text-sm font-black uppercase text-slate-400 mb-6 tracking-widest">Nuevo Perfil Tarifario</h3>
+            <form action="{{ route('admin.billing.rates.store') }}" method="POST" class="space-y-4">
                 @csrf
                 <div>
-                    <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1">Nombre del Plan</label>
-                    <input type="text" name="name" required placeholder="Ej: Tarifa E-commerce Plus" class="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:ring-2 ring-custom-primary transition">
+                    <label class="block text-xs font-bold text-slate-500 mb-1">Nombre del Perfil</label>
+                    <input type="text" name="name" required class="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm" placeholder="Ej: Tarifas 2024 Gold">
                 </div>
-
                 <div class="grid grid-cols-2 gap-4">
                     <div>
-                        <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1">Moneda</label>
-                        <select name="currency" class="w-full px-3 py-2 border rounded-lg text-sm bg-white">
-                            <option value="USD">USD ($)</option>
-                            <option value="VES">VES (Bs)</option>
-                        </select>
+                        <label class="block text-xs font-bold text-slate-500 mb-1">Recepción ($)</label>
+                        <input type="number" step="0.01" name="reception_fee" required class="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm">
                     </div>
                     <div>
-                        <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1">Alm. Bin/Día</label>
-                        <input type="number" name="storage_fee_per_bin_daily" step="0.01" required placeholder="0.50" class="w-full px-3 py-2 border rounded-lg text-sm">
+                        <label class="block text-xs font-bold text-slate-500 mb-1">Picking ($)</label>
+                        <input type="number" step="0.01" name="picking_fee" required class="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm">
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-500 mb-1">Almacenaje (m³/mes) ($)</label>
+                    <input type="number" step="0.01" name="storage_m3_monthly" required class="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm">
+                </div>
+                
+                <div class="bg-blue-50 p-4 rounded-xl space-y-4">
+                    <p class="text-[10px] font-black text-blue-600 uppercase">Servicios Extra</p>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-500 mb-1">Empaque Premium ($)</label>
+                        <input type="number" step="0.01" name="premium_packing_fee" value="0.00" class="w-full px-4 py-2 border border-blue-200 rounded-xl text-sm">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-500 mb-1">Manejo de RMA ($)</label>
+                        <input type="number" step="0.01" name="rma_handling_fee" value="0.00" class="w-full px-4 py-2 border border-blue-200 rounded-xl text-sm">
                     </div>
                 </div>
 
-                <hr class="border-slate-100">
-
-                <div class="space-y-3">
-                    <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest">Costos Operativos</p>
-                    <div class="flex justify-between items-center bg-slate-50 p-3 rounded-xl border border-slate-100">
-                        <span class="text-xs font-bold text-slate-600">Base Picking (Orden)</span>
-                        <input type="number" name="picking_fee_base" step="0.1" required class="w-20 p-1 text-right border rounded text-sm" value="1.50">
-                    </div>
-                    <div class="flex justify-between items-center bg-slate-50 p-3 rounded-xl border border-slate-100">
-                        <span class="text-xs font-bold text-slate-600">Entrada (Por Unidad)</span>
-                        <input type="number" name="inbound_fee_per_unit" step="0.01" required class="w-20 p-1 text-right border rounded text-sm" value="0.10">
-                    </div>
-                </div>
-
-                <button type="submit" class="w-full bg-custom-primary text-white py-3 rounded-xl font-bold text-sm shadow-lg shadow-blue-500/20 hover:brightness-110 transition">
+                <button type="submit" class="w-full bg-slate-800 text-white py-3 rounded-xl font-bold hover:bg-black transition-all">
                     Guardar Perfil
                 </button>
             </form>
         </div>
-    </div>
 
-    <!-- LADO DERECHO: LISTADO Y ASIGNACIÓN -->
-    <div class="lg:col-span-2 space-y-6">
-        
-        <!-- Perfiles Existentes -->
-        <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-            <div class="p-4 bg-slate-50 border-b border-slate-100 font-bold text-slate-700 text-xs uppercase tracking-wider">
-                Planes Tarifarios Activos
-            </div>
-            <div class="overflow-x-auto">
-                <table class="w-full text-left text-sm">
-                    <thead class="bg-slate-50/50 text-slate-400 font-bold text-[10px] uppercase">
-                        <tr>
-                            <th class="px-6 py-3">Perfil</th>
-                            <th class="px-6 py-3 text-center">Almacenamiento</th>
-                            <th class="px-6 py-3 text-center">Operativo</th>
-                            <th class="px-6 py-3 text-right">Acciones</th>
-                        </tr>
-                    </thead>
-                    <tbody class="divide-y divide-slate-100">
-                        @foreach($profiles as $profile)
-                        <tr class="hover:bg-slate-50 transition">
-                            <td class="px-6 py-4">
-                                <p class="font-bold text-slate-700">{{ $profile->name }}</p>
-                                <span class="text-[10px] bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded font-black">{{ $profile->currency }}</span>
-                            </td>
-                            <td class="px-6 py-4 text-center">
-                                <span class="text-xs font-bold text-slate-600">${{ number_format($profile->storage_fee_per_bin_daily, 2) }} /bin día</span>
-                            </td>
-                            <td class="px-6 py-4 text-center">
-                                <p class="text-[10px] text-slate-400 font-bold uppercase">Pick: ${{ $profile->picking_fee_base }}</p>
-                                <p class="text-[10px] text-slate-400 font-bold uppercase">In: ${{ $profile->inbound_fee_per_unit }}</p>
-                            </td>
-                            <td class="px-6 py-4 text-right">
-                                <button class="text-slate-400 hover:text-custom-primary"><i class="fa-solid fa-pen-to-square"></i></button>
-                            </td>
-                        </tr>
+        <!-- Formulario Asignar Perfil a Cliente -->
+        <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+            <h3 class="text-sm font-black uppercase text-slate-400 mb-6 tracking-widest">Asignar Tarifas a Cliente</h3>
+            <form action="{{ route('admin.billing.assign_agreement') }}" method="POST" class="space-y-4">
+                @csrf
+                <div>
+                    <label class="block text-xs font-bold text-slate-500 mb-1">Seleccionar Cliente</label>
+                    <select name="client_id" required class="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm">
+                        <option value="">Elegir cliente...</option>
+                        @foreach($clients as $client)
+                            <option value="{{ $client->id }}">{{ $client->company_name }}</option>
                         @endforeach
-                    </tbody>
-                </table>
-            </div>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-500 mb-1">Perfil Tarifario</label>
+                    <select name="profile_id" required class="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm">
+                        <option value="">Elegir perfil...</option>
+                        @foreach($profiles as $profile)
+                            <option value="{{ $profile->id }}">{{ $profile->name }}</option>
+                        @endforeach
+                    </select>
+                </div>
+                <button type="submit" class="w-full bg-blue-600 text-white py-3 rounded-xl font-bold hover:bg-blue-700 shadow-lg shadow-blue-200 transition-all">
+                    Establecer Acuerdo
+                </button>
+            </form>
         </div>
 
-        <!-- Asignación por Cliente -->
-        <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-            <div class="p-4 bg-slate-50 border-b border-slate-100 font-bold text-slate-700 text-xs uppercase tracking-wider">
-                Acuerdos por Cliente
-            </div>
-            <div class="p-6 grid grid-cols-1 md:grid-cols-2 gap-4">
-                @foreach($clients as $client)
-                    <div class="p-4 rounded-xl border border-slate-100 bg-slate-50 flex justify-between items-center">
-                        <div>
-                            <p class="font-bold text-slate-800 text-sm">{{ $client->company_name }}</p>
-                            <p class="text-[10px] text-slate-400 uppercase font-black">
-                                Plan: <span class="text-custom-primary">{{ $client->billingAgreement->profile->name ?? 'SIN PLAN' }}</span>
-                            </p>
-                        </div>
-                        <button class="bg-white text-slate-600 p-2 rounded-lg border border-slate-200 hover:text-custom-primary transition shadow-sm">
-                            <i class="fa-solid fa-link"></i>
-                        </button>
-                    </div>
-                @endforeach
-            </div>
+        <!-- Listado de Acuerdos Activos -->
+        <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 lg:col-span-3">
+             <h3 class="text-sm font-black uppercase text-slate-400 mb-4 tracking-widest">Acuerdos Tarifarios Vigentes</h3>
+             <table class="w-full text-left">
+                 <thead>
+                     <tr class="text-[10px] text-slate-400 uppercase">
+                         <th class="py-2">Cliente</th>
+                         <th class="py-2">Perfil Asignado</th>
+                         <th class="py-2">Estatus</th>
+                         <th class="py-2">Desde</th>
+                     </tr>
+                 </thead>
+                 <tbody class="divide-y divide-slate-100">
+                     @foreach($agreements as $agreement)
+                     <tr class="text-sm">
+                         <td class="py-3 font-bold text-slate-700">{{ $agreement->client->company_name }}</td>
+                         <td class="py-3 text-blue-600 font-medium">{{ $agreement->billingProfile->name }}</td>
+                         <td class="py-3">
+                             <span class="px-2 py-1 bg-emerald-100 text-emerald-700 text-[10px] font-bold rounded-full uppercase">Activo</span>
+                         </td>
+                         <td class="py-3 text-slate-500 text-xs">{{ $agreement->starts_at }}</td>
+                     </tr>
+                     @endforeach
+                 </tbody>
+             </table>
         </div>
     </div>
 </div>
