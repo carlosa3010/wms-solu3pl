@@ -3,31 +3,29 @@
 namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
-// Importaciones críticas de modelos con namespaces correctos
-use App\Models\Inventory; 
+use App\Models\Inventory;
 use App\Models\Product;
 use App\Models\Client;
 use App\Models\Location;
 use App\Models\StockMovement;
-// Soporte de Laravel
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Mail; // Importante para enviar correos
-use App\Mail\LowStockAlert; // Mailable para alertas de stock
+use Illuminate\Support\Facades\Mail;
+use App\Mail\LowStockAlert;
 
 class InventoryController extends Controller
 {
     /**
-     * Muestra el stock actual global con filtros de búsqueda y cliente.
+     * Muestra el stock actual global con filtros.
      * Ruta: admin.inventory.stock
      */
-    public function index(Request $request)
+    public function stock(Request $request)
     {
-        // Cargamos relaciones para evitar el problema N+1 y mejorar el rendimiento
+        // Carga ansiosa de relaciones para optimizar rendimiento
         $query = Inventory::with(['product.client', 'location.warehouse']);
 
-        // Filtro por búsqueda (SKU, Nombre Producto, LPN o Código de Ubicación)
+        // Filtro de búsqueda general (SKU, Nombre, LPN, Ubicación)
         if ($request->filled('search')) {
             $search = $request->search;
             $query->where(function($q) use ($search) {
@@ -42,36 +40,38 @@ class InventoryController extends Controller
             });
         }
 
-        // Filtro por Cliente (Propietario de la mercancía)
+        // Filtro por Cliente
         if ($request->filled('client_id')) {
             $query->whereHas('product', function($q) use ($request) {
                 $q->where('client_id', $request->client_id);
             });
         }
 
-        // Ordenamos por la actualización más reciente (según estructura SQL subida)
+        // Ordenamiento y paginación
         $inventory = $query->orderBy('updated_at', 'desc')->paginate(20);
         
-        // Obtenemos clientes activos para el filtro
+        // Lista de clientes para el filtro
         $clients = Client::where('is_active', true)->orderBy('company_name')->get();
 
         return view('admin.inventory.stock', compact('inventory', 'clients'));
     }
 
     /**
-     * Muestra el Kardex (Historial de Movimientos) del sistema.
+     * Muestra el historial de movimientos (Kardex).
      * Ruta: admin.inventory.movements
      */
     public function movements(Request $request)
     {
         $query = StockMovement::with(['product', 'fromLocation', 'toLocation', 'user']);
 
+        // Filtro por SKU
         if ($request->filled('sku')) {
             $query->whereHas('product', function($q) use ($request) {
                 $q->where('sku', 'like', "%{$request->sku}%");
             });
         }
 
+        // Filtro por Tipo de Movimiento
         if ($request->filled('type')) {
             $query->where('reason', 'like', "%{$request->type}%");
         }
@@ -82,20 +82,20 @@ class InventoryController extends Controller
     }
 
     /**
-     * Formulario para realizar ajustes manuales de stock.
+     * Vista para realizar ajustes manuales de inventario.
      * Ruta: admin.inventory.adjustments
      */
     public function adjustments(Request $request)
     {
-        // Se cargan todos los productos (la tabla no tiene is_active según SQL)
         $products = Product::orderBy('sku')->get();
-        $locations = Location::with('warehouse')->orderBy('code')->get();
+        // Limitamos la carga de ubicaciones para no saturar la vista si hay miles
+        $locations = Location::with('warehouse')->orderBy('code')->take(1000)->get();
 
         return view('admin.inventory.adjustments', compact('products', 'locations'));
     }
 
     /**
-     * Procesa y registra un ajuste manual en el inventario y el Kardex.
+     * Procesa el guardado de un ajuste manual.
      */
     public function storeAdjustment(Request $request)
     {
@@ -111,26 +111,28 @@ class InventoryController extends Controller
             DB::transaction(function () use ($request) {
                 $location = Location::where('code', $request->location_code)->first();
                 
-                // Buscar o crear registro de inventario en esa posición
+                // Buscar o inicializar inventario en esa ubicación
                 $inventory = Inventory::firstOrCreate(
                     ['product_id' => $request->product_id, 'location_id' => $location->id],
                     ['quantity' => 0]
                 );
 
                 if ($request->type === 'in') {
+                    // Entrada
                     $inventory->increment('quantity', $request->quantity);
                     $fromLoc = null;
                     $toLoc = $location->id;
                 } else {
+                    // Salida
                     if ($inventory->quantity < $request->quantity) {
-                        throw new \Exception("Stock insuficiente en la ubicación para realizar la salida por ajuste.");
+                        throw new \Exception("Stock insuficiente en la ubicación para realizar la salida.");
                     }
                     $inventory->decrement('quantity', $request->quantity);
                     $fromLoc = $location->id;
                     $toLoc = null;
                 }
 
-                // Registro histórico en Kardex (stock_movements)
+                // Registrar en Kardex
                 StockMovement::create([
                     'product_id' => $request->product_id,
                     'from_location_id' => $fromLoc,
@@ -142,30 +144,24 @@ class InventoryController extends Controller
                     'created_at' => now()
                 ]);
 
-                // --- ALERTA DE STOCK BAJO ---
-                // Solo verificamos si fue una salida y si el producto tiene configuración de stock mínimo
+                // Verificar alertas de stock bajo si es una salida
                 if ($request->type === 'out') {
                     $product = Product::find($request->product_id);
-                    
                     if ($product->min_stock > 0) {
-                        // Obtenemos el stock total actual (sumando todas las ubicaciones)
                         $currentTotalStock = Inventory::where('product_id', $product->id)->sum('quantity');
-
-                        if ($currentTotalStock <= $product->min_stock) {
-                            // Enviar alerta al cliente dueño del producto
-                            if ($product->client && $product->client->email) {
-                                try {
-                                    Mail::to($product->client->email)->send(new LowStockAlert($product, $currentTotalStock));
-                                } catch (\Exception $e) {
-                                    Log::error("Error enviando alerta de stock bajo: " . $e->getMessage());
-                                }
+                        
+                        if ($currentTotalStock <= $product->min_stock && $product->client && $product->client->email) {
+                            try {
+                                Mail::to($product->client->email)->send(new LowStockAlert($product, $currentTotalStock));
+                            } catch (\Exception $e) {
+                                Log::error("Error enviando alerta stock bajo: " . $e->getMessage());
                             }
                         }
                     }
                 }
             });
 
-            return redirect()->route('admin.inventory.stock')->with('success', 'Ajuste de inventario procesado correctamente.');
+            return redirect()->route('admin.inventory.stock')->with('success', 'Ajuste procesado correctamente.');
 
         } catch (\Exception $e) {
             return back()->withInput()->withErrors(['error' => $e->getMessage()]);
@@ -173,8 +169,7 @@ class InventoryController extends Controller
     }
 
     /**
-     * AJAX: Retorna bines de una bodega que contienen un SKU específico con stock.
-     * Vital para la funcionalidad de bines de origen en Traslados.
+     * AJAX: Obtener bines con stock (Origen para traslados).
      */
     public function getSources(Request $request)
     {
@@ -186,17 +181,25 @@ class InventoryController extends Controller
                 return response()->json([]);
             }
 
-            // Consultamos ubicaciones que tengan stock del producto solicitado (> 0)
             $locations = Location::where('warehouse_id', $warehouseId)
-                ->whereHas('stock', function($q) use ($productId) {
+                ->whereHas('inventory', function($q) use ($productId) {
                     $q->where('product_id', $productId)->where('quantity', '>', 0);
                 })
-                ->with(['stock' => function($q) use ($productId) {
+                ->with(['inventory' => function($q) use ($productId) {
                     $q->where('product_id', $productId);
                 }])
                 ->get();
 
-            return response()->json($locations);
+            // Formatear respuesta para el select del frontend
+            $data = $locations->map(function($loc) {
+                return [
+                    'id' => $loc->id,
+                    'code' => $loc->code,
+                    'quantity' => $loc->inventory->first()->quantity ?? 0
+                ];
+            });
+
+            return response()->json($data);
 
         } catch (\Exception $e) {
             Log::error("Error en getSources: " . $e->getMessage());
@@ -205,8 +208,7 @@ class InventoryController extends Controller
     }
 
     /**
-     * AJAX: Retorna todos los bines de una bodega específica.
-     * Vital para la funcionalidad de bines de destino en Traslados.
+     * AJAX: Obtener todos los bines de una bodega (Destino para traslados).
      */
     public function getBins(Request $request)
     {
@@ -219,7 +221,8 @@ class InventoryController extends Controller
             
             $locations = Location::where('warehouse_id', $warehouseId)
                 ->orderBy('code')
-                ->get(['id', 'code']);
+                ->select('id', 'code')
+                ->get();
 
             return response()->json($locations);
 
@@ -227,5 +230,18 @@ class InventoryController extends Controller
             Log::error("Error en getBins: " . $e->getMessage());
             return response()->json(['error' => 'Error al consultar bines de destino'], 500);
         }
+    }
+
+    /**
+     * AJAX: Búsqueda general de ubicaciones (Select2).
+     */
+    public function searchLocations(Request $request)
+    {
+        $term = $request->get('q');
+        $locations = Location::where('code', 'LIKE', "%{$term}%")
+            ->select('id', 'code')
+            ->limit(20)
+            ->get();
+        return response()->json($locations);
     }
 }

@@ -13,6 +13,16 @@
 </div>
 @endif
 
+@if($errors->any())
+<div class="bg-red-50 border-l-4 border-red-500 text-red-700 p-3 mb-4 rounded-xl shadow-sm">
+    <ul class="list-disc pl-5 text-xs">
+        @foreach ($errors->all() as $error)
+            <li>{{ $error }}</li>
+        @endforeach
+    </ul>
+</div>
+@endif
+
 @if(request('view') == 'map')
     {{-- ================================================================= --}}
     {{-- MODO MAPA INTERACTIVO: Visualización de Estructura Física         --}}
@@ -219,7 +229,8 @@
                     
                     <div class="absolute top-4 right-4 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                         <button onclick="editBranch({{ json_encode($branch) }})" class="text-slate-400 hover:text-amber-500 p-1.5 rounded-lg bg-white shadow-sm border" title="Editar"><i class="fa-solid fa-pen text-[10px]"></i></button>
-                        <form action="{{ route('admin.branches.destroy', $branch->id) }}" method="POST" onsubmit="return confirm('¿Borrar sucursal?');">
+                        {{-- FIX: Usamos la ruta genérica de destroy que apunta al método despachador del controlador --}}
+                        <form action="{{ url('admin/branches/' . $branch->id) }}" method="POST" onsubmit="return confirm('¿Borrar sucursal?');">
                             @csrf @method('DELETE')
                             <button type="submit" class="text-slate-400 hover:text-rose-600 p-1.5 rounded-lg bg-white shadow-sm border" title="Eliminar"><i class="fa-solid fa-trash text-[10px]"></i></button>
                         </form>
@@ -255,7 +266,14 @@
                             @foreach($branch->warehouses as $wh)
                                 <div class="flex justify-between items-center bg-white p-2 rounded-lg border border-slate-100 hover:border-blue-200 transition-colors">
                                     <span class="text-[10px] font-bold text-slate-600 truncate">{{ $wh->name }}</span>
-                                    <button onclick="editWarehouse({{ $wh }})" class="text-slate-300 hover:text-blue-500"><i class="fa-solid fa-gear text-[9px]"></i></button>
+                                    <div class="flex gap-1">
+                                        <button onclick="editWarehouse({{ json_encode($wh) }})" class="text-slate-300 hover:text-blue-500 p-1"><i class="fa-solid fa-gear text-[9px]"></i></button>
+                                        {{-- FIX: Ruta genérica para destroy de warehouses --}}
+                                        <form action="{{ url('admin/warehouses/' . $wh->id) }}" method="POST" onsubmit="return confirm('¿Eliminar bodega?');">
+                                            @csrf @method('DELETE')
+                                            <button type="submit" class="text-slate-300 hover:text-rose-500 p-1"><i class="fa-solid fa-xmark text-[9px]"></i></button>
+                                        </form>
+                                    </div>
                                 </div>
                             @endforeach
                         </div>
@@ -496,65 +514,50 @@
         document.getElementById('warehouseModal').classList.remove('hidden');
     }
 
-    /**
-     * =========================================================
-     * LÓGICA DEL MAPA Y CONFIGURACIÓN DE RACKS
-     * =========================================================
-     */
     @if(request('view') == 'map')
 
-    function loadMap(id, name, code, aisles, racksPerSide, levels) {
+    function loadMap(id, name, code, rows, cols, levels) {
         currentWhId = id;
         currentWhCode = code;
-        currentWhDefaultLevelsCount = parseInt(levels); // Guardar el límite real de la bodega
+        currentWhDefaultLevelsCount = parseInt(levels);
 
-        // UI Updates
         document.getElementById('empty-map-state').classList.add('hidden');
         document.getElementById('map-header').classList.remove('hidden');
         document.getElementById('map-container').classList.remove('hidden');
-        
-        // Reset Right Panel
         document.getElementById('rack-config-panel').classList.remove('hidden');
         document.getElementById('empty-panel-state').classList.remove('hidden');
         document.getElementById('panel-content').classList.add('hidden');
-
-        // Header Info
+        
         document.getElementById('current-warehouse-name').innerText = name;
-        document.getElementById('current-warehouse-details').innerText = `${code} | ${aisles} PASILLOS | ${racksPerSide} RACKS/LADO | ${levels} NIVELES/RACK`;
+        document.getElementById('current-warehouse-details').innerText = `${code} | ${rows} PASILLOS | ${cols} RACKS`;
         document.getElementById('max-levels-display').innerText = levels;
 
-        // Update Labels Button
         const printBtn = document.getElementById('printWhLabelsBtn');
         printBtn.href = `/admin/warehouses/${id}/labels`;
         printBtn.classList.remove('hidden');
 
-        // Generate Grid
         const layout = document.getElementById('warehouse-layout');
         layout.innerHTML = ''; 
 
-        for (let p = 1; p <= aisles; p++) {
+        for (let p = 1; p <= rows; p++) {
             const aisleContainer = document.createElement('div');
             aisleContainer.className = "flex flex-col bg-white p-4 rounded-[2rem] shadow-md border border-slate-100 ring-2 ring-slate-50 transition-all hover:shadow-lg";
             
-            // Header Pasillo
             aisleContainer.innerHTML = `<div class="text-[9px] font-black text-slate-400 mb-3 uppercase tracking-[0.2em] text-center border-b border-slate-100 pb-1">Pasillo P-${p.toString().padStart(2,'0')}</div>`;
 
-            // Lado A
             const rowA = document.createElement('div');
             rowA.className = "flex gap-1.5 justify-center mb-2";
-            for (let c = 1; c <= racksPerSide; c++) rowA.appendChild(createRackCell(p, 'A', c));
+            for (let c = 1; c <= cols; c++) rowA.appendChild(createRackCell(p, 'A', c));
             aisleContainer.appendChild(rowA);
 
-            // Camino Central (Visual)
             const path = document.createElement('div');
             path.className = "h-8 bg-slate-50 border-y border-dashed border-slate-200 rounded-lg flex items-center justify-center mb-2 overflow-hidden";
             path.innerHTML = '<div class="flex gap-8 opacity-10"><i class="fa-solid fa-chevron-right text-xs"></i><i class="fa-solid fa-chevron-right text-xs"></i></div>';
             aisleContainer.appendChild(path);
 
-            // Lado B
             const rowB = document.createElement('div');
             rowB.className = "flex gap-1.5 justify-center";
-            for (let c = 1; c <= racksPerSide; c++) rowB.appendChild(createRackCell(p, 'B', c));
+            for (let c = 1; c <= cols; c++) rowB.appendChild(createRackCell(p, 'B', c));
             aisleContainer.appendChild(rowB);
 
             layout.appendChild(aisleContainer);
@@ -583,8 +586,7 @@
         document.getElementById('empty-panel-state').classList.add('hidden');
         document.getElementById('panel-content').classList.remove('hidden');
         document.getElementById('rack-loader').classList.remove('hidden');
-        
-        document.getElementById('panel-rack-id').innerText = `P${aisle.toString().padStart(2,'0')} - LADO ${side} - RACK ${col.toString().padStart(2,'0')}`;
+        document.getElementById('panel-rack-id').innerText = `P${aisle.toString().padStart(2,'0')} - LADO ${side} - R${col.toString().padStart(2,'0')}`;
         
         currentLevels = [];
         renderLevelsForm();
@@ -596,24 +598,22 @@
                  const data = await res.json();
                  
                  // FIX LÓGICA DB VS DEFAULT:
-                 // Si la DB retorna niveles configurados, úsalos.
-                 if(data.levels && data.levels.length > 0) {
+                 if(data.status === 'success' && data.levels && data.levels.length > 0) {
                      currentLevels = data.levels.map(l => ({ bins: l.bins_count, type: l.bin_type_id }));
                  } else {
                     // Si NO hay configuración en DB (es nuevo), generar estructura basada en la configuración global de la Bodega
                     currentLevels = [];
+                    const defaultType = binTypes.length > 0 ? binTypes[0].id : null;
+
                     for(let i=0; i < currentWhDefaultLevelsCount; i++) {
-                        // Por defecto asignamos el primer tipo de bin si existe, o null
-                        const defaultType = binTypes.length > 0 ? binTypes[0].id : null;
-                        currentLevels.push({ bins: 3, type: defaultType });
+                        currentLevels.push({ bins: 3, type: defaultType }); 
                     }
                  }
              } else {
-                 // Error de red o 404, usar default de la bodega
                  currentLevels = [];
+                 const defaultType = binTypes.length > 0 ? binTypes[0].id : null;
                  for(let i=0; i < currentWhDefaultLevelsCount; i++) {
-                     const defaultType = binTypes.length > 0 ? binTypes[0].id : null;
-                     currentLevels.push({ bins: 3, type: defaultType });
+                     currentLevels.push({ bins: 3, type: defaultType }); 
                  }
              }
 
@@ -623,9 +623,9 @@
             console.error('Error loading rack details:', error);
             // Fallback en error: Usar configuración de bodega
             currentLevels = [];
+            const defaultType = binTypes.length > 0 ? binTypes[0].id : null;
             for(let i=0; i < currentWhDefaultLevelsCount; i++) {
-                const defaultType = binTypes.length > 0 ? binTypes[0].id : null;
-                currentLevels.push({ bins: 3, type: defaultType });
+                currentLevels.push({ bins: 3, type: defaultType }); 
             }
             renderLevelsForm();
         } finally {
@@ -686,7 +686,6 @@
 
         document.getElementById('total-positions-badge').innerText = `${totalPositions} Posiciones`;
         
-        // Controlar visibilidad del botón agregar según límites de bodega
         const addBtn = document.getElementById('btn-add-level');
         if (currentLevels.length >= currentWhDefaultLevelsCount) {
             addBtn.classList.add('opacity-50', 'cursor-not-allowed');
@@ -706,7 +705,7 @@
         }
         
         const lastLevel = currentLevels[currentLevels.length - 1];
-        // Si hay un nivel anterior, copiamos su tipo, si no, usamos el primero de la lista
+        // Usar el tipo del nivel anterior o el primero de la lista por defecto
         const defaultType = binTypes.length > 0 ? binTypes[0].id : null;
         const newType = lastLevel ? lastLevel.type : defaultType;
 
@@ -723,7 +722,7 @@
 
     function updateLevelData(index, field, value) {
         currentLevels[index][field] = value;
-        if(field === 'bins') renderLevelsForm(); // Re-renderizar para actualizar total badge
+        if(field === 'bins') renderLevelsForm();
     }
 
     function updateNomenclaturePreview() {
@@ -732,8 +731,6 @@
         const p = currentAisle.toString().padStart(2,'0');
         const s = currentSide;
         const r = currentRack.toString().padStart(2,'0');
-        
-        // Ejemplo para Nivel 1, Bin 1
         const n = "01";
         const b = "01";
         
@@ -744,7 +741,6 @@
     async function saveRackConfig(e) {
         e.preventDefault();
         
-        // FIX: Usar getElementById porque el botón está fuera del form y e.submitter puede fallar
         const btn = document.getElementById('btn-save-rack');
         const originalText = btn.innerHTML;
         btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Guardando...';
