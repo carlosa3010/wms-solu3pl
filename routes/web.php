@@ -17,7 +17,7 @@ use App\Http\Controllers\OrderController;
 use App\Http\Controllers\ShippingController;
 use App\Http\Controllers\TransferController;
 use App\Http\Controllers\BillingController;
-use App\Http\Controllers\ServicePlanController; // NUEVO CONTROLADOR
+use App\Http\Controllers\ServicePlanController;
 use App\Http\Controllers\RMAController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\PaymentMethodController;
@@ -189,7 +189,7 @@ Route::middleware(['auth'])->group(function () {
         });
 
         // =========================================================
-        // MÓDULO: FINANZAS (Billing) - ACTUALIZADO
+        // MÓDULO: FINANZAS (Billing) - UNIFICADO
         // =========================================================
         Route::prefix('billing')->name('billing.')->group(function () {
             // Dashboard Financiero
@@ -199,20 +199,20 @@ Route::middleware(['auth'])->group(function () {
             Route::get('/payments', [BillingController::class, 'paymentsIndex'])->name('payments.index');
             Route::post('/payments/{id}/approve', [BillingController::class, 'approvePayment'])->name('payments.approve');
             Route::post('/payments/{id}/reject', [BillingController::class, 'rejectPayment'])->name('payments.reject');
-            // Nuevo: Pagos Manuales / Recargas Admin
             Route::post('/payments/manual', [BillingController::class, 'storeManualPayment'])->name('payments.manual.store');
             
-            // Gestión de Planes y Tarifas (Usando ServicePlanController)
-            Route::get('/rates', [ServicePlanController::class, 'index'])->name('rates');
-            Route::post('/rates', [ServicePlanController::class, 'store'])->name('rates.store');
-            Route::post('/assign-agreement', [ServicePlanController::class, 'assignAgreement'])->name('assign_agreement');
-            // Route::delete('/rates/{id}', [ServicePlanController::class, 'destroy'])->name('rates.destroy'); // Opcional
+            // Gestión de Planes y Tarifas (Unificado en BillingController para usar vista 'rates')
+            Route::get('/rates', [BillingController::class, 'rates'])->name('rates');
+            Route::post('/rates', [BillingController::class, 'storePlan'])->name('rates.store');
+            Route::post('/assign-agreement', [BillingController::class, 'assignAgreement'])->name('assign_agreement');
             
             // Facturación y Cierres
             Route::get('/pre-invoice/{clientId}', [BillingController::class, 'downloadPreInvoice'])->name('pre_invoice');
-            Route::post('/generate', [BillingController::class, 'generateInvoices'])->name('generate');
-            Route::get('/invoice/{invoiceId}/download', [BillingController::class, 'downloadInvoice'])->name('invoice.download');
             Route::post('/run-daily', [BillingController::class, 'runDailyBilling'])->name('run_daily');
+
+            // Rutas adicionales de Invoice (si existen métodos en BillingController)
+            // Route::post('/generate', [BillingController::class, 'generateInvoices'])->name('generate');
+            // Route::get('/invoice/{invoiceId}/download', [BillingController::class, 'downloadInvoice'])->name('invoice.download');
         });
 
         // Módulo: Configuración
@@ -252,7 +252,6 @@ Route::middleware(['auth'])->group(function () {
     Route::prefix('portal')->name('client.')->group(function () {
         Route::get('/dashboard', [ClientPortalController::class, 'dashboard'])->name('portal');
         
-        // ... (Rutas de catálogo, inventario, etc. mantenidas igual) ...
         Route::prefix('catalog')->group(function () {
             Route::get('/', [ClientPortalController::class, 'catalog'])->name('catalog');
             Route::post('/store', [ClientPortalController::class, 'storeSku'])->name('catalog.store');
@@ -286,12 +285,12 @@ Route::middleware(['auth'])->group(function () {
             Route::post('/{id}/action', [ClientPortalController::class, 'rmaAction'])->name('rma.action');
         });
         
-        // Facturación Cliente (Nuevas Rutas)
+        // Facturación Cliente
         Route::prefix('billing')->group(function () {
             Route::get('/', [ClientPortalController::class, 'billing'])->name('billing.index');
             Route::post('/payment', [ClientPortalController::class, 'storePayment'])->name('billing.store_payment');
             Route::get('/download-preinvoice', [ClientPortalController::class, 'downloadPreInvoice'])->name('billing.download');
-            Route::post('/withdrawal', [ClientPortalController::class, 'requestWithdrawal'])->name('billing.withdrawal'); // Solicitud retiro
+            Route::post('/withdrawal', [ClientPortalController::class, 'requestWithdrawal'])->name('billing.withdrawal');
         });
         
         Route::get('/states/{countryId}', [ClientPortalController::class, 'getStatesByCountry'])->name('states.get');

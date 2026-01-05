@@ -5,7 +5,6 @@
 
 @section('content')
 
-{{-- Métricas Rápidas --}}
 <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
     <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
         <p class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Pre-Facturación (Mes Actual)</p>
@@ -31,7 +30,6 @@
 </div>
 
 <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-    {{-- Pre-Facturas Abiertas --}}
     <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
         <div class="flex justify-between items-center mb-4">
             <h3 class="font-black text-slate-800 text-sm uppercase tracking-wide">Cortes en Curso</h3>
@@ -49,7 +47,8 @@
                 <tbody class="text-xs">
                     @forelse($openPreInvoices as $invoice)
                         <tr class="border-b border-slate-50 hover:bg-slate-50 transition">
-                            <td class="py-3 font-bold text-slate-700">{{ $invoice->client->name }}</td>
+                            {{-- Corrección: company_name --}}
+                            <td class="py-3 font-bold text-slate-700">{{ $invoice->client->company_name }}</td>
                             <td class="py-3 font-bold text-slate-700 text-right">${{ number_format($invoice->total_amount, 2) }}</td>
                             <td class="py-3 text-center">
                                 <a href="{{ route('admin.billing.pre_invoice', $invoice->client_id) }}" class="text-indigo-600 hover:text-indigo-800" title="Ver Detalle">
@@ -58,14 +57,13 @@
                             </td>
                         </tr>
                     @empty
-                        <tr><td colspan="3" class="py-4 text-center text-slate-400 italic">No hay cortes abiertos. Ejecuta el proceso diario.</td></tr>
+                        <tr><td colspan="3" class="py-4 text-center text-slate-400 italic">No hay cortes abiertos.</td></tr>
                     @endforelse
                 </tbody>
             </table>
         </div>
     </div>
 
-    {{-- Últimos Pagos Recibidos --}}
     <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
         <div class="flex justify-between items-center mb-4">
             <h3 class="font-black text-slate-800 text-sm uppercase tracking-wide">Últimos Pagos</h3>
@@ -79,7 +77,8 @@
                             <i class="fa-solid fa-money-bill-wave"></i>
                         </div>
                         <div>
-                            <p class="text-xs font-black text-slate-700">{{ $payment->client->name }}</p>
+                            {{-- Corrección: company_name --}}
+                            <p class="text-xs font-black text-slate-700">{{ $payment->client->company_name }}</p>
                             <p class="text-[10px] text-slate-500">{{ $payment->payment_method }} • Ref: {{ $payment->reference }}</p>
                         </div>
                     </div>
@@ -89,7 +88,7 @@
                     </div>
                 </div>
             @empty
-                <p class="text-center text-slate-400 text-xs py-4 italic">No hay pagos pendientes de revisión.</p>
+                <p class="text-center text-slate-400 text-xs py-4 italic">No hay pagos pendientes.</p>
             @endforelse
         </div>
     </div>

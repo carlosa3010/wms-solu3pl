@@ -37,7 +37,7 @@
     </div>
 
     <div class="client-info">
-        <strong>Cliente:</strong> {{ $client->name }}<br>
+       <strong>Cliente:</strong> {{ $client->company_name }}<br>
         <strong>Email:</strong> {{ $client->email }}<br>
         <strong>ID:</strong> {{ $client->code ?? $client->id }}
     </div>

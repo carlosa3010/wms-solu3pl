@@ -23,7 +23,7 @@
                                 <i class="fa-solid fa-money-bill-transfer"></i>
                             </div>
                             <div>
-                                <h4 class="font-bold text-slate-700 text-sm">{{ $payment->client->name }}</h4>
+                               <h4 class="font-bold text-slate-700 text-sm">{{ $payment->client->company_name }}</h4>
                                 <p class="text-xs text-slate-500">
                                     {{ $payment->payment_method }} • Ref: <span class="font-mono">{{ $payment->reference }}</span>
                                 </p>
@@ -95,7 +95,7 @@
                     <select name="client_id" required class="w-full border border-slate-200 rounded-lg p-2 text-sm bg-white">
                         <option value="">Seleccionar...</option>
                         @foreach($clients as $client)
-                            <option value="{{ $client->id }}">{{ $client->name }}</option>
+                            <option value="{{ $client->id }}">{{ $client->company_name }}</option>
                         @endforeach
                     </select>
                 </div>

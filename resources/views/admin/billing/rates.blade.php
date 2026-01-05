@@ -71,7 +71,7 @@
             @foreach($agreements as $agreement)
                 <div class="border border-slate-200 rounded-xl p-4 hover:shadow-md transition bg-slate-50/50">
                     <div class="flex justify-between items-start mb-2">
-                        <h4 class="font-black text-sm text-slate-800">{{ $agreement->client->name }}</h4>
+                        <h4 class="font-black text-sm text-slate-800">{{ $agreement->client->company_name }}</h4>
                         <span class="text-[10px] bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-bold">Activo</span>
                     </div>
                     <p class="text-xs text-slate-500 mb-1"><i class="fa-solid fa-file-contract mr-1"></i> Plan: {{ $agreement->servicePlan->name }}</p>
@@ -181,7 +181,7 @@
                     <select name="client_id" required class="w-full border border-slate-200 rounded-lg p-2 text-sm bg-white">
                         <option value="">Seleccionar...</option>
                         @foreach($clients as $client)
-                            <option value="{{ $client->id }}">{{ $client->name }}</option>
+                            <option value="{{ $client->id }}">{{ $client->company_name }}</option>
                         @endforeach
                     </select>
                 </div>

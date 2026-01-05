@@ -16,7 +16,7 @@ class Client extends Model
      * Se agrega 'name' para compatibilidad con el nuevo sistema de facturación.
      */
     protected $fillable = [
-        'name',           // Nuevo campo estándar
+        //'name',           // Nuevo campo estándar
         'company_name',
         'tax_id',
         'contact_name',

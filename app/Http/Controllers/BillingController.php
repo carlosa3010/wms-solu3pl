@@ -23,101 +23,28 @@ class BillingController extends Controller
         $this->billingService = $billingService;
     }
 
-    /**
-     * Vista Principal: Resumen Financiero
-     */
     public function index()
     {
-        // Resumen de pre-facturas abiertas
         $openPreInvoices = PreInvoice::where('status', 'open')->with('client')->get();
-        
-        // Últimos pagos recibidos (Pendientes de aprobación)
         $pendingPayments = Payment::where('status', 'pending')->with('client')->take(10)->get();
 
         return view('admin.billing.index', compact('openPreInvoices', 'pendingPayments'));
     }
 
-    // =========================================================
-    // GESTIÓN DE PLANES Y TARIFAS
-    // =========================================================
-
     public function rates()
     {
-        $plans = ServicePlan::with('binPrices.binType')->get();
-        $binTypes = BinType::all();
-        $clients = Client::where('is_active', true)->get();
-        $agreements = ClientBillingAgreement::with(['client', 'servicePlan'])->get();
-
-        return view('admin.billing.rates', compact('plans', 'binTypes', 'clients', 'agreements'));
+        // Esta lógica ahora se maneja principalmente en ServicePlanController
+        return redirect()->route('admin.billing.rates');
     }
-
-    public function storePlan(Request $request)
-    {
-        $data = $request->validate([
-            'name' => 'required|string|max:150',
-            'reception_cost_per_box' => 'required|numeric|min:0',
-            'picking_cost_per_order' => 'required|numeric|min:0',
-            'additional_item_cost' => 'required|numeric|min:0',
-            'premium_packing_cost' => 'required|numeric|min:0',
-            'return_cost' => 'required|numeric|min:0',
-            'storage_billing_type' => 'required|in:m3,bins',
-            'm3_price_monthly' => 'nullable|required_if:storage_billing_type,m3|numeric|min:0',
-            'bin_prices' => 'nullable|required_if:storage_billing_type,bins|array'
-        ]);
-
-        DB::transaction(function () use ($request, $data) {
-            $plan = ServicePlan::create($data);
-
-            if ($request->storage_billing_type === 'bins' && $request->bin_prices) {
-                foreach ($request->bin_prices as $binTypeId => $price) {
-                    $plan->binPrices()->create([
-                        'bin_type_id' => $binTypeId,
-                        'price_per_day' => $price
-                    ]);
-                }
-            }
-        });
-
-        return back()->with('success', 'Plan de tarifas creado exitosamente.');
-    }
-
-    public function assignAgreement(Request $request)
-    {
-        $request->validate([
-            'client_id' => 'required|exists:clients,id',
-            'service_plan_id' => 'required|exists:service_plans,id',
-            'agreed_m3_volume' => 'nullable|numeric|min:0',
-            'has_premium_packing' => 'nullable' // checkbox returns 'on' or null
-        ]);
-
-        ClientBillingAgreement::updateOrCreate(
-            ['client_id' => $request->client_id],
-            [
-                'service_plan_id' => $request->service_plan_id,
-                'agreed_m3_volume' => $request->agreed_m3_volume ?? 0,
-                'has_premium_packing' => $request->has('has_premium_packing'),
-                'start_date' => now(),
-                'status' => 'active'
-            ]
-        );
-
-        return back()->with('success', 'Acuerdo asignado al cliente correctamente.');
-    }
-
-    // =========================================================
-    // GESTIÓN DE PAGOS Y BILLETERA
-    // =========================================================
 
     public function paymentsIndex()
     {
         $payments = Payment::with('client')->latest()->paginate(20);
-        $clients = Client::where('is_active', true)->orderBy('name')->get();
+        // Cambio de 'name' a 'company_name' en el ordenamiento
+        $clients = Client::where('is_active', true)->orderBy('company_name')->get();
         return view('admin.billing.payments_index', compact('payments', 'clients'));
     }
 
-    /**
-     * Aprobar un pago (Factura o Recarga de Billetera)
-     */
     public function approvePayment($id)
     {
         $payment = Payment::findOrFail($id);
@@ -129,12 +56,10 @@ class BillingController extends Controller
         DB::transaction(function () use ($payment) {
             $payment->update(['status' => 'approved', 'approved_at' => now()]);
 
-            // Leer metadatos del pago para saber qué hacer
             $notes = json_decode($payment->notes, true);
-            $type = $notes['type'] ?? 'wallet'; // Default a wallet si no especifica
+            $type = $notes['type'] ?? 'wallet';
 
             if ($type === 'wallet') {
-                // Recarga de Billetera
                 $this->billingService->addFunds(
                     $payment->client_id, 
                     $payment->amount, 
@@ -142,10 +67,6 @@ class BillingController extends Controller
                     'payment',
                     $payment->id
                 );
-            } elseif ($type === 'invoice') {
-                // Pago de Factura
-                // Aquí iría la lógica para marcar la Invoice como pagada
-                // $invoice = Invoice::find($notes['invoice_id']); ...
             }
         });
 
@@ -159,9 +80,6 @@ class BillingController extends Controller
         return back()->with('success', 'Pago rechazado.');
     }
 
-    /**
-     * Crear pago manual o recarga manual desde Admin
-     */
     public function storeManualPayment(Request $request)
     {
         $request->validate([
@@ -183,10 +101,6 @@ class BillingController extends Controller
 
         return back()->with('info', 'Pago de factura manual registrado.');
     }
-
-    // =========================================================
-    // GENERACIÓN DE FACTURAS (CIERRE)
-    // =========================================================
 
     public function runDailyBilling()
     {
@@ -214,6 +128,7 @@ class BillingController extends Controller
         ];
 
         $pdf = Pdf::loadView('admin.billing.pdf_template', $data);
-        return $pdf->download("Prefactura_{$preInvoice->client->name}.pdf");
+        // Corrección: Usar company_name para el nombre del archivo
+        return $pdf->download("Prefactura_{$preInvoice->client->company_name}.pdf");
     }
 }
