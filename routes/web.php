@@ -189,7 +189,7 @@ Route::middleware(['auth'])->group(function () {
         });
 
         // =========================================================
-        // MÓDULO: FINANZAS (Billing) - COMPLETO
+        // MÓDULO: FINANZAS (Billing) - UNIFICADO Y COMPLETO
         // =========================================================
         Route::prefix('billing')->name('billing.')->group(function () {
             // Dashboard y Pagos (BillingController)
@@ -246,7 +246,9 @@ Route::middleware(['auth'])->group(function () {
         });
     });
 
-    // PORTAL CLIENTES
+    // ==========================================
+    // ÁREA DEL CLIENTE (portal/)
+    // ==========================================
     Route::prefix('portal')->name('client.')->group(function () {
         Route::get('/dashboard', [ClientPortalController::class, 'dashboard'])->name('portal');
         
@@ -283,7 +285,7 @@ Route::middleware(['auth'])->group(function () {
             Route::post('/{id}/action', [ClientPortalController::class, 'rmaAction'])->name('rma.action');
         });
         
-        // Facturación Cliente
+        // Facturación y Billetera Cliente
         Route::prefix('billing')->group(function () {
             Route::get('/', [ClientPortalController::class, 'billing'])->name('billing.index');
             Route::post('/payment', [ClientPortalController::class, 'storePayment'])->name('billing.store_payment');
@@ -299,5 +301,6 @@ Route::middleware(['auth'])->group(function () {
         Route::get('/support', [ClientPortalController::class, 'support'])->name('support');
     });
 
+    // Estación de Trabajo
     Route::get('/warehouse/station', [DashboardController::class, 'warehouseStation'])->name('warehouse.station');
 });
