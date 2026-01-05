@@ -3,12 +3,8 @@
 namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
-use App\Models\ServicePlan;
-use App\Models\ClientBillingAgreement;
 use App\Models\Client;
-use App\Models\BinType;
 use App\Models\Payment;
-use App\Models\Wallet;
 use App\Models\PreInvoice;
 use App\Services\BillingService;
 use Illuminate\Support\Facades\DB;
@@ -23,6 +19,9 @@ class BillingController extends Controller
         $this->billingService = $billingService;
     }
 
+    /**
+     * Dashboard Financiero Principal.
+     */
     public function index()
     {
         $openPreInvoices = PreInvoice::where('status', 'open')->with('client')->get();
@@ -31,30 +30,37 @@ class BillingController extends Controller
         return view('admin.billing.index', compact('openPreInvoices', 'pendingPayments'));
     }
 
-    public function rates()
-    {
-        // Esta lógica ahora se maneja principalmente en ServicePlanController
-        return redirect()->route('admin.billing.rates');
-    }
-
+    /**
+     * Listado de Pagos Recibidos.
+     */
     public function paymentsIndex()
     {
         $payments = Payment::with('client')->latest()->paginate(20);
-        // Cambio de 'name' a 'company_name' en el ordenamiento
-        $clients = Client::where('is_active', true)->orderBy('company_name')->get();
+        
+        // Uso consistente de company_name para el ordenamiento
+        $clients = Client::where('is_active', true)
+            ->orderBy('company_name')
+            ->get();
+        
         return view('admin.billing.payments_index', compact('payments', 'clients'));
     }
 
+    /**
+     * Aprobación de pagos y recarga de billetera.
+     */
     public function approvePayment($id)
     {
         $payment = Payment::findOrFail($id);
         
         if ($payment->status !== 'pending') {
-            return back()->with('error', 'El pago ya fue procesado.');
+            return back()->with('error', 'Este pago ya fue procesado anteriormente.');
         }
 
         DB::transaction(function () use ($payment) {
-            $payment->update(['status' => 'approved', 'approved_at' => now()]);
+            $payment->update([
+                'status' => 'approved',
+                'approved_at' => now()
+            ]);
 
             $notes = json_decode($payment->notes, true);
             $type = $notes['type'] ?? 'wallet';
@@ -70,16 +76,22 @@ class BillingController extends Controller
             }
         });
 
-        return back()->with('success', 'Pago aprobado y aplicado.');
+        return back()->with('success', 'Pago aprobado y saldo aplicado exitosamente.');
     }
 
+    /**
+     * Rechazo de pagos.
+     */
     public function rejectPayment($id)
     {
         $payment = Payment::findOrFail($id);
         $payment->update(['status' => 'rejected']);
-        return back()->with('success', 'Pago rechazado.');
+        return back()->with('success', 'El pago ha sido marcado como rechazado.');
     }
 
+    /**
+     * Registro de recargas manuales desde el panel administrativo.
+     */
     public function storeManualPayment(Request $request)
     {
         $request->validate([
@@ -96,22 +108,28 @@ class BillingController extends Controller
                 "Recarga Manual Admin: {$request->reference}",
                 'manual_admin'
             );
-            return back()->with('success', 'Billetera recargada exitosamente.');
+            return back()->with('success', 'Billetera del cliente recargada correctamente.');
         }
 
-        return back()->with('info', 'Pago de factura manual registrado.');
+        return back()->with('info', 'Funcionalidad de pago directo a factura en desarrollo.');
     }
 
+    /**
+     * Ejecuta manualmente el cálculo de costos operativos del día.
+     */
     public function runDailyBilling()
     {
         try {
             $this->billingService->calculateDailyCosts(now());
-            return back()->with('success', 'Cálculo de costos diarios ejecutado.');
+            return back()->with('success', 'El proceso de facturación diaria se ejecutó correctamente.');
         } catch (\Exception $e) {
-            return back()->with('error', 'Error al ejecutar: ' . $e->getMessage());
+            return back()->with('error', 'Ocurrió un error al procesar la facturación: ' . $e->getMessage());
         }
     }
 
+    /**
+     * Genera y descarga el PDF de pre-factura usando el campo company_name.
+     */
     public function downloadPreInvoice($clientId)
     {
         $preInvoice = PreInvoice::where('client_id', $clientId)
@@ -123,12 +141,15 @@ class BillingController extends Controller
             'client' => $preInvoice->client,
             'items' => $preInvoice->details,
             'total' => $preInvoice->total_amount,
-            'title' => 'PRE-FACTURA EN CURSO',
+            'title' => 'DETALLE DE CONSUMO MENSUAL (PRE-FACTURA)',
             'date' => now()->format('d/m/Y')
         ];
 
         $pdf = Pdf::loadView('admin.billing.pdf_template', $data);
-        // Corrección: Usar company_name para el nombre del archivo
-        return $pdf->download("Prefactura_{$preInvoice->client->company_name}.pdf");
+        
+        // Uso de company_name para el nombre del archivo descargado
+        $fileName = "Prefactura_" . str_replace(' ', '_', $preInvoice->client->company_name) . ".pdf";
+        
+        return $pdf->download($fileName);
     }
 }

@@ -2,9 +2,9 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 
 class ClientBillingAgreement extends Model
 {
@@ -12,15 +12,12 @@ class ClientBillingAgreement extends Model
 
     protected $fillable = [
         'client_id',
-        'service_plan_id',     // Vinculación al nuevo sistema de planes
-        'billing_profile_id',  // Mantenemos por compatibilidad legacy si es necesario
+        'service_plan_id',
+        'agreed_m3_volume',
+        'has_premium_packing',
         'start_date',
         'end_date',
-        'status',              // active, inactive
-        'agreed_m3_volume',    // Volumen m3 contratado (si el plan es por m3)
-        'has_premium_packing', // Si contrató servicio de empaque premium
-        'payment_term_days',   // Días de crédito
-        'notes'
+        'status'
     ];
 
     protected $casts = [
@@ -29,24 +26,19 @@ class ClientBillingAgreement extends Model
         'has_premium_packing' => 'boolean',
     ];
 
+    /**
+     * Relación con el Cliente.
+     */
     public function client()
     {
-        return $this->belongsTo(Client::class);
+        return $this->belongsTo(Client::class, 'client_id');
     }
 
     /**
-     * Relación con el Nuevo Plan de Servicios
+     * Relación con el Plan de Servicio.
      */
     public function servicePlan()
     {
-        return $this->belongsTo(ServicePlan::class);
-    }
-
-    /**
-     * Relación Legacy (Perfil antiguo)
-     */
-    public function billingProfile()
-    {
-        return $this->belongsTo(BillingProfile::class);
+        return $this->belongsTo(ServicePlan::class, 'service_plan_id');
     }
 }

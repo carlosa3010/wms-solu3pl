@@ -189,30 +189,28 @@ Route::middleware(['auth'])->group(function () {
         });
 
         // =========================================================
-        // MÓDULO: FINANZAS (Billing) - UNIFICADO
+        // MÓDULO: FINANZAS (Billing) - COMPLETO
         // =========================================================
         Route::prefix('billing')->name('billing.')->group(function () {
-            // Dashboard Financiero
+            // Dashboard y Pagos (BillingController)
             Route::get('/', [BillingController::class, 'index'])->name('index');
-            
-            // Gestión de Pagos Recibidos y Billetera
             Route::get('/payments', [BillingController::class, 'paymentsIndex'])->name('payments.index');
             Route::post('/payments/{id}/approve', [BillingController::class, 'approvePayment'])->name('payments.approve');
             Route::post('/payments/{id}/reject', [BillingController::class, 'rejectPayment'])->name('payments.reject');
             Route::post('/payments/manual', [BillingController::class, 'storeManualPayment'])->name('payments.manual.store');
             
-            // Gestión de Planes y Tarifas (Unificado en BillingController para usar vista 'rates')
-            Route::get('/rates', [BillingController::class, 'rates'])->name('rates');
-            Route::post('/rates', [BillingController::class, 'storePlan'])->name('rates.store');
-            Route::post('/assign-agreement', [BillingController::class, 'assignAgreement'])->name('assign_agreement');
+            // Gestión de Tarifas y Planes (ServicePlanController)
+            Route::get('/rates', [ServicePlanController::class, 'index'])->name('rates');
+            Route::post('/rates', [ServicePlanController::class, 'store'])->name('rates.store');
+            Route::delete('/rates/{id}', [ServicePlanController::class, 'destroyPlan'])->name('rates.destroy');
             
-            // Facturación y Cierres
+            // Gestión de Acuerdos (ServicePlanController)
+            Route::post('/assign-agreement', [ServicePlanController::class, 'assignPlan'])->name('assign_agreement');
+            Route::delete('/agreement/{id}', [ServicePlanController::class, 'destroyAgreement'])->name('agreement.destroy');
+            
+            // Facturación y Cierres (BillingController)
             Route::get('/pre-invoice/{clientId}', [BillingController::class, 'downloadPreInvoice'])->name('pre_invoice');
             Route::post('/run-daily', [BillingController::class, 'runDailyBilling'])->name('run_daily');
-
-            // Rutas adicionales de Invoice (si existen métodos en BillingController)
-            // Route::post('/generate', [BillingController::class, 'generateInvoices'])->name('generate');
-            // Route::get('/invoice/{invoiceId}/download', [BillingController::class, 'downloadInvoice'])->name('invoice.download');
         });
 
         // Módulo: Configuración
