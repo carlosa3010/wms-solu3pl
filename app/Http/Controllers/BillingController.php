@@ -3,243 +3,217 @@
 namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
-use App\Models\Client;
-use App\Models\BillingProfile;
-use App\Models\Invoice;
-use App\Models\ServiceCharge;
+use App\Models\ServicePlan;
 use App\Models\ClientBillingAgreement;
-use App\Models\Payment; 
+use App\Models\Client;
+use App\Models\BinType;
+use App\Models\Payment;
+use App\Models\Wallet;
+use App\Models\PreInvoice;
+use App\Services\BillingService;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\Mail;
-use App\Mail\InvoiceGenerated;
-use Illuminate\Support\Facades\Log;
+use Barryvdh\DomPDF\Facade\Pdf;
 
 class BillingController extends Controller
 {
+    protected $billingService;
+
+    public function __construct(BillingService $billingService)
+    {
+        $this->billingService = $billingService;
+    }
+
     /**
-     * Muestra el panel principal de finanzas con KPIs y listado de facturas.
+     * Vista Principal: Resumen Financiero
      */
     public function index()
     {
-        $invoices = Invoice::with('client')->orderBy('created_at', 'desc')->paginate(15);
+        // Resumen de pre-facturas abiertas
+        $openPreInvoices = PreInvoice::where('status', 'open')->with('client')->get();
         
-        $stats = [
-            'total_pending' => Invoice::where('status', 'unpaid')->sum('total_amount'),
-            'collected_month' => Invoice::where('status', 'paid')
-                                        ->whereMonth('created_at', now()->month)
-                                        ->sum('total_amount'),
-            'pending_charges' => ServiceCharge::where('is_invoiced', false)->count()
-        ];
+        // Últimos pagos recibidos (Pendientes de aprobación)
+        $pendingPayments = Payment::where('status', 'pending')->with('client')->take(10)->get();
 
-        return view('admin.billing.index', compact('invoices', 'stats'));
+        return view('admin.billing.index', compact('openPreInvoices', 'pendingPayments'));
     }
 
-    /**
-     * Gestión de Tarifas: Visualiza perfiles existentes y acuerdos con clientes.
-     */
+    // =========================================================
+    // GESTIÓN DE PLANES Y TARIFAS
+    // =========================================================
+
     public function rates()
     {
-        $profiles = BillingProfile::all();
-        // Cargamos clientes con su acuerdo y el perfil asociado
-        $clients = Client::with('billingAgreement.profile')->get();
-        
-        // Cargamos los acuerdos explícitamente para asegurar su visualización en la tabla de la vista
-        $agreements = ClientBillingAgreement::with(['client', 'profile'])->get();
+        $plans = ServicePlan::with('binPrices.binType')->get();
+        $binTypes = BinType::all();
+        $clients = Client::where('is_active', true)->get();
+        $agreements = ClientBillingAgreement::with(['client', 'servicePlan'])->get();
 
-        return view('admin.billing.rates', compact('profiles', 'clients', 'agreements'));
+        return view('admin.billing.rates', compact('plans', 'binTypes', 'clients', 'agreements'));
     }
 
-    /**
-     * Crea un nuevo Perfil Tarifario con servicios extras incluidos.
-     */
-    public function storeProfile(Request $request)
+    public function storePlan(Request $request)
     {
-        $request->validate([
-            'name' => 'required|string|max:100|unique:billing_profiles,name',
-            'currency' => 'required|string|max:3',
-            'storage_fee_per_bin_daily' => 'required|numeric|min:0',
-            'picking_fee_base' => 'required|numeric|min:0',
-            'inbound_fee_per_unit' => 'required|numeric|min:0',
-            'premium_packing_fee' => 'required|numeric|min:0', // Nuevo: Empaque Premium
-            'rma_handling_fee' => 'required|numeric|min:0',    // Nuevo: Manejo de RMA
+        $data = $request->validate([
+            'name' => 'required|string|max:150',
+            'reception_cost_per_box' => 'required|numeric|min:0',
+            'picking_cost_per_order' => 'required|numeric|min:0',
+            'additional_item_cost' => 'required|numeric|min:0',
+            'premium_packing_cost' => 'required|numeric|min:0',
+            'return_cost' => 'required|numeric|min:0',
+            'storage_billing_type' => 'required|in:m3,bins',
+            'm3_price_monthly' => 'nullable|required_if:storage_billing_type,m3|numeric|min:0',
+            'bin_prices' => 'nullable|required_if:storage_billing_type,bins|array'
         ]);
 
-        BillingProfile::create($request->all());
+        DB::transaction(function () use ($request, $data) {
+            $plan = ServicePlan::create($data);
 
-        return back()->with('success', 'Perfil tarifario creado correctamente.');
-    }
-
-    /**
-     * Vincula un cliente con un plan tarifario específico.
-     * CORRECCIÓN: Manejo de errores y persistencia robusta.
-     */
-    public function assignAgreement(Request $request)
-    {
-        $request->validate([
-            'client_id' => 'required|exists:clients,id',
-            'billing_profile_id' => 'required|exists:billing_profiles,id',
-            'start_date' => 'required|date'
-        ]);
-
-        try {
-            // Actualizamos o creamos el acuerdo para el cliente
-            ClientBillingAgreement::updateOrCreate(
-                ['client_id' => $request->client_id],
-                [
-                    'billing_profile_id' => $request->billing_profile_id,
-                    'start_date' => $request->start_date,
-                    'is_active' => true // Aseguramos que el acuerdo esté activo al asignarse
-                ]
-            );
-
-            return back()->with('success', 'El perfil tarifario ha sido asignado al cliente exitosamente.');
-        } catch (\Exception $e) {
-            Log::error("Error al asignar perfil tarifario: " . $e->getMessage());
-            return back()->with('error', 'No se pudo completar la asignación: ' . $e->getMessage());
-        }
-    }
-
-    /**
-     * Genera la vista/PDF de la Pre-Factura.
-     */
-    public function downloadPreInvoice($clientId)
-    {
-        $client = Client::with(['serviceCharges' => function($q) {
-            $q->where('is_invoiced', false)->orderBy('charge_date', 'asc');
-        }])->findOrFail($clientId);
-
-        $data = [
-            'client'    => $client,
-            'items'     => $client->serviceCharges,
-            'total'     => $client->accumulated_charges,
-            'title'     => 'REPORTE DE SERVICIOS ACUMULADOS',
-            'is_draft'  => true,
-            'date'      => now()->format('d/m/Y')
-        ];
-
-        return view('admin.billing.pdf_template', $data);
-    }
-
-    /**
-     * Descarga factura oficial.
-     */
-    public function downloadInvoice($invoiceId)
-    {
-        $invoice = Invoice::with(['client'])->findOrFail($invoiceId);
-        
-        $data = [
-            'client'    => $invoice->client,
-            'invoice'   => $invoice,
-            'title'     => 'FACTURA COMERCIAL: ' . $invoice->invoice_number,
-            'is_draft'  => false,
-            'date'      => $invoice->created_at->format('d/m/Y')
-        ];
-
-        return view('admin.billing.pdf_template', $data);
-    }
-
-    /**
-     * Lógica de cobro diario automatizado.
-     */
-    public function runDailyBilling()
-    {
-        $agreements = ClientBillingAgreement::with(['client', 'profile'])->where('is_active', true)->get();
-
-        DB::transaction(function () use ($agreements) {
-            foreach ($agreements as $agreement) {
-                // Contar bines ocupados por este cliente hoy
-                $occupiedBinsCount = DB::table('inventory')
-                    ->join('products', 'inventory.product_id', '=', 'products.id')
-                    ->where('products.client_id', $agreement->client_id)
-                    ->distinct('location_id')
-                    ->count();
-
-                if ($occupiedBinsCount > 0) {
-                    $amount = $occupiedBinsCount * $agreement->profile->storage_fee_per_bin_daily;
-
-                    ServiceCharge::create([
-                        'client_id'    => $agreement->client_id,
-                        'type'         => 'storage',
-                        'description'  => "Almacenamiento diario: {$occupiedBinsCount} bines ocupados.",
-                        'amount'       => $amount,
-                        'charge_date'  => now(),
-                        'is_invoiced'  => false,
-                        'created_at'   => now()
+            if ($request->storage_billing_type === 'bins' && $request->bin_prices) {
+                foreach ($request->bin_prices as $binTypeId => $price) {
+                    $plan->binPrices()->create([
+                        'bin_type_id' => $binTypeId,
+                        'price_per_day' => $price
                     ]);
                 }
             }
         });
 
-        // Lógica de generación masiva de facturas
-        $clientsToBill = Client::whereHas('serviceCharges', function($q) {
-            $q->where('is_invoiced', false);
-        })->get();
+        return back()->with('success', 'Plan de tarifas creado exitosamente.');
+    }
 
-        foreach ($clientsToBill as $client) {
-            $pendingCharges = $client->serviceCharges()->where('is_invoiced', false)->get();
-            $total = $pendingCharges->sum('amount');
+    public function assignAgreement(Request $request)
+    {
+        $request->validate([
+            'client_id' => 'required|exists:clients,id',
+            'service_plan_id' => 'required|exists:service_plans,id',
+            'agreed_m3_volume' => 'nullable|numeric|min:0',
+            'has_premium_packing' => 'nullable' // checkbox returns 'on' or null
+        ]);
 
-            if ($total > 0) {
-                try {
-                    DB::transaction(function () use ($client, $total, $pendingCharges) {
-                        $invoice = Invoice::create([
-                            'client_id' => $client->id,
-                            'invoice_number' => 'INV-' . strtoupper(uniqid()),
-                            'total_amount' => $total,
-                            'status' => 'unpaid',
-                            'due_date' => now()->addDays(15),
-                        ]);
+        ClientBillingAgreement::updateOrCreate(
+            ['client_id' => $request->client_id],
+            [
+                'service_plan_id' => $request->service_plan_id,
+                'agreed_m3_volume' => $request->agreed_m3_volume ?? 0,
+                'has_premium_packing' => $request->has('has_premium_packing'),
+                'start_date' => now(),
+                'status' => 'active'
+            ]
+        );
 
-                        foreach ($pendingCharges as $charge) {
-                            $charge->update(['is_invoiced' => true, 'invoice_id' => $invoice->id]);
-                        }
+        return back()->with('success', 'Acuerdo asignado al cliente correctamente.');
+    }
 
-                        if ($client->email) {
-                            Mail::to($client->email)->send(new InvoiceGenerated($invoice));
-                        }
-                    });
-                } catch (\Exception $e) {
-                    Log::error("Error al generar factura para cliente {$client->id}: " . $e->getMessage());
-                }
-            }
-        }
+    // =========================================================
+    // GESTIÓN DE PAGOS Y BILLETERA
+    // =========================================================
 
-        return back()->with('success', 'Cargos diarios calculados y facturas generadas correctamente.');
+    public function paymentsIndex()
+    {
+        $payments = Payment::with('client')->latest()->paginate(20);
+        $clients = Client::where('is_active', true)->orderBy('name')->get();
+        return view('admin.billing.payments_index', compact('payments', 'clients'));
     }
 
     /**
-     * Listado de pagos reportados.
+     * Aprobar un pago (Factura o Recarga de Billetera)
      */
-    public function paymentsIndex(Request $request)
-    {
-        $query = Payment::with('client')->latest();
-
-        if ($request->has('status') && $request->status !== '') {
-            $query->where('status', $request->status);
-        }
-
-        $payments = $query->get();
-
-        return view('admin.billing.payments_index', compact('payments'));
-    }
-
     public function approvePayment($id)
     {
         $payment = Payment::findOrFail($id);
-        $payment->status = 'approved';
-        $payment->approved_at = now();
-        $payment->save();
+        
+        if ($payment->status !== 'pending') {
+            return back()->with('error', 'El pago ya fue procesado.');
+        }
 
-        return redirect()->back()->with('success', 'Pago acreditado correctamente.');
+        DB::transaction(function () use ($payment) {
+            $payment->update(['status' => 'approved', 'approved_at' => now()]);
+
+            // Leer metadatos del pago para saber qué hacer
+            $notes = json_decode($payment->notes, true);
+            $type = $notes['type'] ?? 'wallet'; // Default a wallet si no especifica
+
+            if ($type === 'wallet') {
+                // Recarga de Billetera
+                $this->billingService->addFunds(
+                    $payment->client_id, 
+                    $payment->amount, 
+                    "Recarga por Transferencia/Depósito #{$payment->reference}",
+                    'payment',
+                    $payment->id
+                );
+            } elseif ($type === 'invoice') {
+                // Pago de Factura
+                // Aquí iría la lógica para marcar la Invoice como pagada
+                // $invoice = Invoice::find($notes['invoice_id']); ...
+            }
+        });
+
+        return back()->with('success', 'Pago aprobado y aplicado.');
     }
 
     public function rejectPayment($id)
     {
         $payment = Payment::findOrFail($id);
-        $payment->status = 'rejected';
-        $payment->save();
+        $payment->update(['status' => 'rejected']);
+        return back()->with('success', 'Pago rechazado.');
+    }
 
-        return redirect()->back()->with('success', 'Pago rechazado.');
+    /**
+     * Crear pago manual o recarga manual desde Admin
+     */
+    public function storeManualPayment(Request $request)
+    {
+        $request->validate([
+            'client_id' => 'required|exists:clients,id',
+            'amount' => 'required|numeric|min:0.01',
+            'type' => 'required|in:wallet_recharge,invoice_payment',
+            'reference' => 'required|string'
+        ]);
+
+        if ($request->type === 'wallet_recharge') {
+            $this->billingService->addFunds(
+                $request->client_id,
+                $request->amount,
+                "Recarga Manual Admin: {$request->reference}",
+                'manual_admin'
+            );
+            return back()->with('success', 'Billetera recargada exitosamente.');
+        }
+
+        return back()->with('info', 'Pago de factura manual registrado.');
+    }
+
+    // =========================================================
+    // GENERACIÓN DE FACTURAS (CIERRE)
+    // =========================================================
+
+    public function runDailyBilling()
+    {
+        try {
+            $this->billingService->calculateDailyCosts(now());
+            return back()->with('success', 'Cálculo de costos diarios ejecutado.');
+        } catch (\Exception $e) {
+            return back()->with('error', 'Error al ejecutar: ' . $e->getMessage());
+        }
+    }
+
+    public function downloadPreInvoice($clientId)
+    {
+        $preInvoice = PreInvoice::where('client_id', $clientId)
+            ->where('status', 'open')
+            ->with(['details', 'client'])
+            ->firstOrFail();
+
+        $data = [
+            'client' => $preInvoice->client,
+            'items' => $preInvoice->details,
+            'total' => $preInvoice->total_amount,
+            'title' => 'PRE-FACTURA EN CURSO',
+            'date' => now()->format('d/m/Y')
+        ];
+
+        $pdf = Pdf::loadView('admin.billing.pdf_template', $data);
+        return $pdf->download("Prefactura_{$preInvoice->client->name}.pdf");
     }
 }

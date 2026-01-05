@@ -17,6 +17,7 @@ use App\Http\Controllers\OrderController;
 use App\Http\Controllers\ShippingController;
 use App\Http\Controllers\TransferController;
 use App\Http\Controllers\BillingController;
+use App\Http\Controllers\ServicePlanController; // NUEVO CONTROLADOR
 use App\Http\Controllers\RMAController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\PaymentMethodController;
@@ -118,28 +119,22 @@ Route::middleware(['auth'])->group(function () {
         Route::get('/coverage', [WarehouseManagementController::class, 'coverage'])->name('coverage.index');
         Route::put('/branches/{id}/coverage', [WarehouseManagementController::class, 'updateCoverage'])->name('branches.coverage');
         
-        // --- RUTAS CRÍTICAS DEL MAPA Y LAYOUT (Orden Corregido) ---
-        // IMPORTANTE: Estas rutas deben ir ANTES de las rutas con {id} para evitar conflictos de "Method not supported"
-        
-        // 1. Acciones Específicas (POST/GET sin parámetros variables al inicio)
+        // --- RUTAS CRÍTICAS DEL MAPA Y LAYOUT ---
         Route::post('warehouses/generate-layout', [WarehouseManagementController::class, 'generateLayout'])->name('warehouses.generate_layout');
         Route::post('warehouses/save-rack', [WarehouseManagementController::class, 'saveRack'])->name('warehouses.save_rack');
         Route::get('warehouses/rack-details', [WarehouseManagementController::class, 'getRackDetails'])->name('warehouses.rack_details');
-        
-        // 2. Rutas con {id} específico para datos del mapa
         Route::get('warehouses/{id}/layout-data', [WarehouseManagementController::class, 'getLayoutData'])->name('warehouses.layout_data');
         Route::get('warehouses/{id}/labels', [WarehouseManagementController::class, 'printLabels'])->name('warehouses.labels');
         
-        // 3. Operaciones CRUD Genéricas (Sucursales)
+        // Operaciones de Sucursales
         Route::post('/branches', [WarehouseManagementController::class, 'store'])->name('branches.store');
         Route::put('/branches/{branch}', [WarehouseManagementController::class, 'update'])->name('branches.update');
         Route::delete('/branches/{branch}', [WarehouseManagementController::class, 'destroy'])->name('branches.destroy');
         
-        // 4. Operaciones CRUD Genéricas (Bodegas) - Al final para que {id} no capture 'generate-layout'
+        // Operaciones de Bodegas
         Route::post('/warehouses', [WarehouseManagementController::class, 'storeWarehouse'])->name('warehouses.store'); 
         Route::put('/warehouses/{id}', [WarehouseManagementController::class, 'updateWarehouse'])->name('warehouses.update'); 
         Route::delete('/warehouses/{id}', [WarehouseManagementController::class, 'destroyWarehouse'])->name('warehouses.destroy');
-        // ----------------------------------------------------
 
         // Módulo: Operaciones
         Route::prefix('receptions')->group(function () {
@@ -193,23 +188,31 @@ Route::middleware(['auth'])->group(function () {
             Route::post('/{id}/process', [RMAController::class, 'process'])->name('rma.process');
         });
 
-        // Módulo: Finanzas
-        Route::prefix('billing')->group(function () {
-            Route::get('/', [BillingController::class, 'index'])->name('billing.index');
+        // =========================================================
+        // MÓDULO: FINANZAS (Billing) - ACTUALIZADO
+        // =========================================================
+        Route::prefix('billing')->name('billing.')->group(function () {
+            // Dashboard Financiero
+            Route::get('/', [BillingController::class, 'index'])->name('index');
             
-            // --- GESTIÓN DE PAGOS RECIBIDOS ---
-            Route::get('/payments', [BillingController::class, 'paymentsIndex'])->name('billing.payments.index');
-            Route::post('/payments/{id}/approve', [BillingController::class, 'approvePayment'])->name('billing.payments.approve');
-            Route::post('/payments/{id}/reject', [BillingController::class, 'rejectPayment'])->name('billing.payments.reject');
+            // Gestión de Pagos Recibidos y Billetera
+            Route::get('/payments', [BillingController::class, 'paymentsIndex'])->name('payments.index');
+            Route::post('/payments/{id}/approve', [BillingController::class, 'approvePayment'])->name('payments.approve');
+            Route::post('/payments/{id}/reject', [BillingController::class, 'rejectPayment'])->name('payments.reject');
+            // Nuevo: Pagos Manuales / Recargas Admin
+            Route::post('/payments/manual', [BillingController::class, 'storeManualPayment'])->name('payments.manual.store');
             
-            Route::get('/rates', [BillingController::class, 'rates'])->name('billing.rates');
-            Route::post('/rates', [BillingController::class, 'storeProfile'])->name('billing.rates.store');
-            Route::post('/rates/update', [BillingController::class, 'updateRates'])->name('billing.rates.update'); 
-            Route::post('/assign-agreement', [BillingController::class, 'assignAgreement'])->name('billing.assign_agreement');
-            Route::get('/pre-invoice/{clientId}', [BillingController::class, 'downloadPreInvoice'])->name('billing.pre_invoice');
-            Route::post('/generate', [BillingController::class, 'generateInvoices'])->name('billing.generate');
-            Route::get('/invoice/{invoiceId}/download', [BillingController::class, 'downloadInvoice'])->name('billing.invoice.download');
-            Route::post('/run-daily', [BillingController::class, 'runDailyBilling'])->name('billing.run_daily');
+            // Gestión de Planes y Tarifas (Usando ServicePlanController)
+            Route::get('/rates', [ServicePlanController::class, 'index'])->name('rates');
+            Route::post('/rates', [ServicePlanController::class, 'store'])->name('rates.store');
+            Route::post('/assign-agreement', [ServicePlanController::class, 'assignAgreement'])->name('assign_agreement');
+            // Route::delete('/rates/{id}', [ServicePlanController::class, 'destroy'])->name('rates.destroy'); // Opcional
+            
+            // Facturación y Cierres
+            Route::get('/pre-invoice/{clientId}', [BillingController::class, 'downloadPreInvoice'])->name('pre_invoice');
+            Route::post('/generate', [BillingController::class, 'generateInvoices'])->name('generate');
+            Route::get('/invoice/{invoiceId}/download', [BillingController::class, 'downloadInvoice'])->name('invoice.download');
+            Route::post('/run-daily', [BillingController::class, 'runDailyBilling'])->name('run_daily');
         });
 
         // Módulo: Configuración
@@ -218,14 +221,12 @@ Route::middleware(['auth'])->group(function () {
             Route::post('/', [SettingController::class, 'update'])->name('settings.update');
             Route::post('/test-mail', [SettingController::class, 'sendTestMail'])->name('settings.test_mail');
 
-            // --- MÉTODOS DE PAGO ---
             Route::get('/payment-methods', [PaymentMethodController::class, 'index'])->name('payment_methods.index');
             Route::post('/payment-methods', [PaymentMethodController::class, 'store'])->name('payment_methods.store');
             Route::put('/payment-methods/{id}', [PaymentMethodController::class, 'update'])->name('payment_methods.update');
             Route::patch('/payment-methods/{id}/toggle', [PaymentMethodController::class, 'toggle'])->name('payment_methods.toggle');
             Route::delete('/payment-methods/{id}', [PaymentMethodController::class, 'destroy'])->name('payment_methods.destroy');
 
-            // --- MÉTODOS DE ENVÍO ---
             Route::get('/shipping-methods', [ShippingMethodController::class, 'index'])->name('shipping_methods.index');
             Route::post('/shipping-methods', [ShippingMethodController::class, 'store'])->name('shipping_methods.store');
             Route::put('/shipping-methods/{id}', [ShippingMethodController::class, 'update'])->name('shipping_methods.update');
@@ -247,38 +248,28 @@ Route::middleware(['auth'])->group(function () {
         });
     });
 
-    // ==========================================
-    // PORTAL DE CLIENTES (portal/)
-    // ==========================================
+    // PORTAL CLIENTES
     Route::prefix('portal')->name('client.')->group(function () {
         Route::get('/dashboard', [ClientPortalController::class, 'dashboard'])->name('portal');
-
-        // --- CATÁLOGO CLIENTE ---
+        
+        // ... (Rutas de catálogo, inventario, etc. mantenidas igual) ...
         Route::prefix('catalog')->group(function () {
             Route::get('/', [ClientPortalController::class, 'catalog'])->name('catalog');
             Route::post('/store', [ClientPortalController::class, 'storeSku'])->name('catalog.store');
             Route::put('/update/{id}', [ClientPortalController::class, 'updateSku'])->name('catalog.update');
             Route::delete('/destroy/{id}', [ClientPortalController::class, 'destroySku'])->name('catalog.destroy');
         });
-
-        // --- INVENTARIO CLIENTE ---
         Route::prefix('stock')->group(function () {
             Route::get('/', [ClientPortalController::class, 'stock'])->name('stock');
             Route::get('/export', [ClientPortalController::class, 'exportStock'])->name('stock.export');
         });
-
-        // --- ASN CLIENTE ---
         Route::prefix('asn')->group(function () {
             Route::get('/', [ClientPortalController::class, 'asnIndex'])->name('asn.index');
             Route::get('/create', [ClientPortalController::class, 'createAsn'])->name('asn.create');
             Route::post('/', [ClientPortalController::class, 'storeAsn'])->name('asn.store');
             Route::get('/{id}', [ClientPortalController::class, 'showAsn'])->name('asn.show'); 
-            
-            // --- NUEVA RUTA: Impresión de etiquetas de bulto ---
             Route::get('/{id}/label', [ClientPortalController::class, 'printAsnLabels'])->name('asn.label');
         });
-
-        // --- PEDIDOS CLIENTE ---
         Route::prefix('orders')->group(function () {
             Route::get('/', [ClientPortalController::class, 'ordersIndex'])->name('orders.index');
             Route::get('/create', [ClientPortalController::class, 'createOrder'])->name('orders.create');
@@ -289,30 +280,25 @@ Route::middleware(['auth'])->group(function () {
             Route::get('/{id}/export', [ClientPortalController::class, 'exportOrder'])->name('orders.export');
             Route::get('/{id}/pdf', [ClientPortalController::class, 'orderPdf'])->name('orders.pdf');
         });
-
-        // --- RMA CLIENTE ---
         Route::prefix('rma')->group(function () {
             Route::get('/', [ClientPortalController::class, 'rmaIndex'])->name('rma');
             Route::get('/{id}', [ClientPortalController::class, 'rmaShow'])->name('rma.show');
             Route::post('/{id}/action', [ClientPortalController::class, 'rmaAction'])->name('rma.action');
         });
-
-        // --- FACTURACIÓN CLIENTE ---
+        
+        // Facturación Cliente (Nuevas Rutas)
         Route::prefix('billing')->group(function () {
             Route::get('/', [ClientPortalController::class, 'billing'])->name('billing.index');
             Route::post('/payment', [ClientPortalController::class, 'storePayment'])->name('billing.store_payment');
             Route::get('/download-preinvoice', [ClientPortalController::class, 'downloadPreInvoice'])->name('billing.download');
+            Route::post('/withdrawal', [ClientPortalController::class, 'requestWithdrawal'])->name('billing.withdrawal'); // Solicitud retiro
         });
-
-        // --- GEOGRAFÍA (AJAX) ---
+        
         Route::get('/states/{countryId}', [ClientPortalController::class, 'getStatesByCountry'])->name('states.get');
-
-        // --- ESTÁTICOS ---
         Route::get('/api-docs', [ClientPortalController::class, 'api'])->name('api');
         Route::get('/api-access', [ClientPortalController::class, 'apiAccess'])->name('api.access'); 
         Route::post('/api-access/tokens', [ClientPortalController::class, 'createToken'])->name('api.tokens.create');
         Route::delete('/api-access/tokens/{token}', [ClientPortalController::class, 'deleteToken'])->name('api.tokens.delete');
-
         Route::get('/support', [ClientPortalController::class, 'support'])->name('support');
     });
 

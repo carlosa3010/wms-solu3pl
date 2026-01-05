@@ -13,8 +13,10 @@ class Client extends Model
     /**
      * IMPORTANTE: 'company_name' y 'contact_name' deben estar aquí 
      * para evitar el error "Field doesn't have a default value".
+     * Se agrega 'name' para compatibilidad con el nuevo sistema de facturación.
      */
     protected $fillable = [
+        'name',           // Nuevo campo estándar
         'company_name',
         'tax_id',
         'contact_name',
@@ -22,7 +24,12 @@ class Client extends Model
         'phone',
         'address',
         'billing_address',
+        'city',           // Agregado si se usa en BillingController
+        'state',          // Agregado si se usa en BillingController
+        'country',        // Agregado si se usa en BillingController
+        'zip_code',       // Agregado si se usa en BillingController
         'is_active',
+        'user_id'         // Relación con el usuario del sistema
     ];
 
     protected $casts = [
@@ -42,7 +49,7 @@ class Client extends Model
 
         static::restored(function ($client) {
             // Restauramos usuarios si es necesario
-            if (method_exists(User::class, 'restore')) {
+            if (class_exists(User::class) && method_exists(User::class, 'restore')) {
                 $client->users()->withTrashed()->restore();
             }
         });
@@ -56,9 +63,33 @@ class Client extends Model
         return $this->hasMany(User::class, 'client_id');
     }
 
-    // Requerido por el módulo de Tarifas de Servicio
+    // Requerido por el módulo de Tarifas de Servicio (Nuevo)
     public function billingAgreement() {
         return $this->hasOne(ClientBillingAgreement::class, 'client_id');
+    }
+    
+    // Relación directa con el Plan de Servicio a través del Acuerdo
+    public function servicePlan()
+    {
+        return $this->hasOneThrough(ServicePlan::class, ClientBillingAgreement::class, 'client_id', 'id', 'id', 'service_plan_id');
+    }
+
+    // Billetera Virtual (Nuevo)
+    public function wallet()
+    {
+        return $this->hasOne(Wallet::class, 'client_id');
+    }
+
+    // Pre-Facturas (Nuevo)
+    public function preInvoices()
+    {
+        return $this->hasMany(PreInvoice::class, 'client_id');
+    }
+    
+    // Cargos de Servicio (Nuevo)
+    public function serviceCharges()
+    {
+        return $this->hasMany(ServiceCharge::class, 'client_id');
     }
 
     public function products() {
@@ -77,10 +108,6 @@ class Client extends Model
         return $this->hasMany(RMA::class, 'client_id');
     }
 
-    public function serviceCharges() {
-        return $this->hasMany(ServiceCharge::class, 'client_id');
-    }
-
     public function invoices() {
         return $this->hasMany(Invoice::class, 'client_id');
     }
@@ -90,11 +117,13 @@ class Client extends Model
      */
 
     public function getPendingBalanceAttribute() {
-        return $this->invoices()->where('status', 'unpaid')->sum('total_amount');
+        // Suma de facturas emitidas pero no pagadas (estado 'sent' o 'overdue')
+        // Ajusta los estados según tu lógica de Invoice
+        return $this->invoices()->whereIn('status', ['sent', 'overdue'])->sum('total');
     }
 
     public function getAccumulatedChargesAttribute() {
-        // Suma cargos de servicio sin factura vinculada
-        return $this->serviceCharges()->whereNull('invoice_id')->sum('amount');
+        // Suma cargos de servicio que aún no están en una factura final (is_invoiced = false)
+        return $this->serviceCharges()->where('is_invoiced', false)->sum('amount');
     }
 }

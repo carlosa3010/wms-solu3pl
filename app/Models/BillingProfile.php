@@ -4,30 +4,28 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
+/**
+ * @deprecated Use ServicePlan instead for new logic.
+ * Mantenido para compatibilidad con registros históricos.
+ */
 class BillingProfile extends Model
 {
-    use HasFactory;
+    use HasFactory, SoftDeletes;
 
-    /**
-     * Atributos asignables de forma masiva.
-     * Se añaden premium_packing_fee y rma_handling_fee para soportar servicios extra.
-     */
     protected $fillable = [
         'name',
-        'currency',
-        'storage_fee_per_bin_daily',
         'picking_fee_base',
-        'inbound_fee_per_unit',
-        'premium_packing_fee', // Tarifa por empaque especial
-        'rma_handling_fee'     // Tarifa por procesamiento de devolución
+        'picking_fee_extra_item',
+        'packing_fee_premium',
+        'returns_processing_fee',
+        'storage_fee_per_cbm_day', // Legacy
+        'currency'
     ];
 
-    /**
-     * Relación: Un perfil tarifario puede estar en muchos acuerdos con clientes.
-     */
     public function agreements()
     {
-        return $this->hasMany(ClientBillingAgreement::class, 'billing_profile_id');
+        return $this->hasMany(ClientBillingAgreement::class);
     }
 }

@@ -1,88 +1,97 @@
 @extends('layouts.admin')
 
-@section('title', 'Facturación')
-@section('header_title', 'Gestión Financiera')
+@section('title', 'Finanzas y Facturación')
+@section('header_title', 'Panel Financiero')
 
 @section('content')
 
-    <!-- Resumen de KPIs Financieros -->
-    <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-        <div class="bg-white p-6 rounded-2xl shadow-sm border-l-4 border-red-500">
-            <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Por Cobrar (Vencido)</p>
-            <h3 class="text-3xl font-black text-slate-800 mt-1">${{ number_format($stats['total_pending'], 2) }}</h3>
-        </div>
-        <div class="bg-white p-6 rounded-2xl shadow-sm border-l-4 border-emerald-500">
-            <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Recaudado este Mes</p>
-            <h3 class="text-3xl font-black text-slate-800 mt-1">${{ number_format($stats['collected_month'], 2) }}</h3>
-        </div>
-        <div class="bg-white p-6 rounded-2xl shadow-sm border-l-4 border-blue-500 flex justify-between items-center">
-            <div>
-                <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Cargos sin Facturar</p>
-                <h3 class="text-3xl font-black text-slate-800 mt-1">{{ $stats['pending_charges'] }}</h3>
-            </div>
-            <button class="bg-blue-600 text-white p-3 rounded-xl hover:scale-105 transition shadow-lg shadow-blue-200">
-                <i class="fa-solid fa-wand-magic-sparkles"></i>
-            </div>
+{{-- Métricas Rápidas --}}
+<div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+    <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
+        <p class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Pre-Facturación (Mes Actual)</p>
+        <h3 class="text-2xl font-black text-slate-800">${{ number_format($openPreInvoices->sum('total_amount'), 2) }}</h3>
+        <div class="mt-2 text-[10px] text-slate-400">
+            <span class="text-emerald-500 font-bold"><i class="fa-solid fa-arrow-trend-up"></i> Acumulado</span> del periodo en curso
         </div>
     </div>
-
-    <!-- Historial de Facturas -->
-    <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-        <div class="p-6 border-b border-slate-100 flex justify-between items-center">
-            <h3 class="font-bold text-slate-800">Facturación Reciente</h3>
-            <div class="flex gap-2">
-                <button class="bg-slate-100 text-slate-600 px-4 py-2 rounded-lg text-xs font-bold hover:bg-slate-200 transition">Exportar Reporte</button>
-            </div>
+    <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
+        <p class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Pagos Pendientes</p>
+        <h3 class="text-2xl font-black text-amber-500">{{ $pendingPayments->count() }}</h3>
+        <div class="mt-2 text-[10px] text-slate-400">Solicitudes por aprobar</div>
+    </div>
+    <div class="bg-indigo-600 p-5 rounded-2xl shadow-lg shadow-indigo-500/30 text-white relative overflow-hidden group cursor-pointer" onclick="document.getElementById('runBillingForm').submit()">
+        <div class="relative z-10">
+            <p class="text-xs font-bold text-indigo-200 uppercase tracking-wider mb-1">Proceso Diario</p>
+            <h3 class="text-xl font-black">Ejecutar Corte</h3>
+            <p class="text-[10px] text-indigo-100 mt-2">Calcula costos de hoy para todos los clientes</p>
         </div>
+        <i class="fa-solid fa-gears absolute -bottom-4 -right-4 text-6xl text-indigo-500 group-hover:rotate-45 transition-transform duration-500"></i>
+        <form id="runBillingForm" action="{{ route('admin.billing.run_daily') }}" method="POST" class="hidden">@csrf</form>
+    </div>
+</div>
 
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+    {{-- Pre-Facturas Abiertas --}}
+    <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+        <div class="flex justify-between items-center mb-4">
+            <h3 class="font-black text-slate-800 text-sm uppercase tracking-wide">Cortes en Curso</h3>
+            <span class="text-[10px] bg-slate-100 text-slate-500 px-2 py-1 rounded-lg font-bold">{{ now()->format('F Y') }}</span>
+        </div>
         <div class="overflow-x-auto">
-            <table class="w-full text-left text-sm">
-                <thead class="bg-slate-50 text-slate-500 font-bold text-[10px] uppercase border-b border-slate-100">
-                    <tr>
-                        <th class="px-6 py-4">Factura #</th>
-                        <th class="px-6 py-4">Cliente / Socio</th>
-                        <th class="px-6 py-4">Periodo</th>
-                        <th class="px-6 py-4 text-center">Total</th>
-                        <th class="px-6 py-4 text-center">Estado</th>
-                        <th class="px-6 py-4 text-right">Acciones</th>
+            <table class="w-full text-left border-collapse">
+                <thead>
+                    <tr class="text-[10px] text-slate-400 uppercase border-b border-slate-100">
+                        <th class="pb-2 font-black">Cliente</th>
+                        <th class="pb-2 font-black text-right">Acumulado</th>
+                        <th class="pb-2 font-black text-center">Acciones</th>
                     </tr>
                 </thead>
-                <tbody class="divide-y divide-slate-100">
-                    @forelse($invoices as $invoice)
-                        <tr class="hover:bg-slate-50/50 transition">
-                            <td class="px-6 py-4 font-mono font-bold text-custom-primary">{{ $invoice->invoice_number }}</td>
-                            <td class="px-6 py-4">
-                                <p class="font-bold text-slate-700">{{ $invoice->client->company_name }}</p>
-                                <span class="text-[10px] text-slate-400 font-mono">{{ $invoice->client->tax_id }}</span>
-                            </td>
-                            <td class="px-6 py-4 text-xs text-slate-500">
-                                {{ $invoice->period_start->format('d/m/y') }} - {{ $invoice->period_end->format('d/m/y') }}
-                            </td>
-                            <td class="px-6 py-4 text-center font-black text-slate-700">
-                                ${{ number_format($invoice->total_amount, 2) }}
-                            </td>
-                            <td class="px-6 py-4 text-center">
-                                @if($invoice->status == 'paid')
-                                    <span class="bg-emerald-100 text-emerald-700 px-2 py-1 rounded-full text-[10px] font-black uppercase tracking-tighter">Cobrada</span>
-                                @else
-                                    <span class="bg-red-100 text-red-700 px-2 py-1 rounded-full text-[10px] font-black uppercase tracking-tighter">Pendiente</span>
-                                @endif
-                            </td>
-                            <td class="px-6 py-4 text-right">
-                                <div class="flex justify-end gap-2">
-                                    <a href="#" class="text-slate-400 hover:text-custom-primary transition p-2"><i class="fa-solid fa-file-pdf"></i></a>
-                                    <button class="text-slate-400 hover:text-emerald-500 transition p-2"><i class="fa-solid fa-check-double"></i></button>
-                                </div>
+                <tbody class="text-xs">
+                    @forelse($openPreInvoices as $invoice)
+                        <tr class="border-b border-slate-50 hover:bg-slate-50 transition">
+                            <td class="py-3 font-bold text-slate-700">{{ $invoice->client->name }}</td>
+                            <td class="py-3 font-bold text-slate-700 text-right">${{ number_format($invoice->total_amount, 2) }}</td>
+                            <td class="py-3 text-center">
+                                <a href="{{ route('admin.billing.pre_invoice', $invoice->client_id) }}" class="text-indigo-600 hover:text-indigo-800" title="Ver Detalle">
+                                    <i class="fa-solid fa-eye"></i>
+                                </a>
                             </td>
                         </tr>
                     @empty
-                        <tr>
-                            <td colspan="6" class="p-20 text-center text-slate-400 italic">No se han generado facturas en este periodo.</td>
-                        </tr>
+                        <tr><td colspan="3" class="py-4 text-center text-slate-400 italic">No hay cortes abiertos. Ejecuta el proceso diario.</td></tr>
                     @endforelse
                 </tbody>
             </table>
         </div>
     </div>
 
+    {{-- Últimos Pagos Recibidos --}}
+    <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+        <div class="flex justify-between items-center mb-4">
+            <h3 class="font-black text-slate-800 text-sm uppercase tracking-wide">Últimos Pagos</h3>
+            <a href="{{ route('admin.billing.payments.index') }}" class="text-[10px] text-indigo-600 font-bold hover:underline">Ver Todos</a>
+        </div>
+        <div class="space-y-3">
+            @forelse($pendingPayments as $payment)
+                <div class="flex items-center justify-between p-3 bg-amber-50 border border-amber-100 rounded-xl">
+                    <div class="flex items-center gap-3">
+                        <div class="w-8 h-8 bg-amber-200 text-amber-700 rounded-lg flex items-center justify-center text-xs">
+                            <i class="fa-solid fa-money-bill-wave"></i>
+                        </div>
+                        <div>
+                            <p class="text-xs font-black text-slate-700">{{ $payment->client->name }}</p>
+                            <p class="text-[10px] text-slate-500">{{ $payment->payment_method }} • Ref: {{ $payment->reference }}</p>
+                        </div>
+                    </div>
+                    <div class="text-right">
+                        <p class="text-xs font-black text-emerald-600">+${{ number_format($payment->amount, 2) }}</p>
+                        <p class="text-[9px] text-slate-400">{{ $payment->created_at->diffForHumans() }}</p>
+                    </div>
+                </div>
+            @empty
+                <p class="text-center text-slate-400 text-xs py-4 italic">No hay pagos pendientes de revisión.</p>
+            @endforelse
+        </div>
+    </div>
+</div>
 @endsection
