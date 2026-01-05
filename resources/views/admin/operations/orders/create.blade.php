@@ -27,17 +27,17 @@
                 <!-- COLUMNA IZQUIERDA (2/3) -->
                 <div class="lg:col-span-2 space-y-6">
                     
-                    <!-- Información de la Orden -->
+                    <!-- Información de la Orden y Cliente -->
                     <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
                         <div class="p-5 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
                             <h3 class="font-bold text-slate-700 text-sm flex items-center gap-2 uppercase tracking-wider">
-                                <i class="fa-solid fa-file-invoice text-custom-primary"></i> Datos del Pedido
+                                <i data-lucide="file-text" class="w-4 h-4 text-indigo-600"></i> Datos del Pedido
                             </h3>
                         </div>
                         <div class="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
                             <div>
                                 <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Dueño de Mercancía (Cliente) *</label>
-                                <select name="client_id" id="client_id" required onchange="handleClientChange()" class="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm focus:ring-2 ring-custom-primary outline-none bg-white transition font-bold text-slate-700">
+                                <select name="client_id" id="client_id" required class="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm focus:ring-2 ring-indigo-500 outline-none bg-white transition font-bold text-slate-700">
                                     <option value="">-- Seleccionar Cliente --</option>
                                     @foreach($clients as $client)
                                         <option value="{{ $client->id }}">{{ $client->company_name }}</option>
@@ -47,66 +47,83 @@
                             </div>
                             <div>
                                 <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Número de Orden # *</label>
-                                <input type="text" name="order_number" value="{{ $nextOrderNumber }}" required class="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm font-bold text-slate-700 bg-slate-50">
+                                <input type="text" name="order_number" value="{{ $nextOrderNumber ?? '' }}" required class="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm font-bold text-slate-700 bg-slate-50" readonly>
+                                <p class="text-[9px] text-slate-400 mt-1 uppercase tracking-tighter">Generado automáticamente.</p>
                             </div>
                         </div>
                     </div>
 
-                    <!-- Información del Destinatario -->
+                    <!-- Información del Destinatario (Formulario Unificado) -->
                     <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
                         <div class="p-5 border-b border-slate-100 bg-slate-50">
                             <h3 class="font-bold text-slate-700 text-sm flex items-center gap-2 uppercase tracking-wider">
-                                <i class="fa-solid fa-user-tag text-custom-primary"></i> Destinatario y Entrega
+                                <i data-lucide="user" class="w-4 h-4 text-indigo-600"></i> Destinatario y Entrega
                             </h3>
                         </div>
                         <div class="p-6 space-y-6">
                             <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                                 <div>
                                     <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Nombre Completo / Razón Social *</label>
-                                    <input type="text" name="customer_name" required placeholder="Ej: Juan Pérez" class="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm outline-none focus:border-custom-primary">
+                                    <input type="text" name="customer_name" required placeholder="Ej: Juan Pérez" class="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm outline-none focus:border-indigo-500 transition-colors">
                                 </div>
                                 <div>
-                                    <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Cédula o RIF (Requerido por Courier) *</label>
-                                    <input type="text" name="customer_id_number" required placeholder="Ej: V-12345678" class="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm font-mono focus:border-custom-primary uppercase">
+                                    <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Cédula o RIF *</label>
+                                    <input type="text" name="customer_id_number" required placeholder="Ej: V-12345678" class="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm font-mono focus:border-indigo-500 uppercase transition-colors">
+                                </div>
+                            </div>
+
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <div>
+                                    <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Teléfono de Contacto *</label>
+                                    <input type="tel" name="phone" required placeholder="+58..." class="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm outline-none focus:border-indigo-500 transition-colors">
+                                </div>
+                                <div>
+                                    <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Correo Electrónico (Opcional)</label>
+                                    <input type="email" name="customer_email" placeholder="cliente@correo.com" class="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm outline-none focus:border-indigo-500 transition-colors">
                                 </div>
                             </div>
 
                             <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
                                 <div>
                                     <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">País *</label>
-                                    <select name="country" required class="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm bg-white">
-                                        <option value="Venezuela" selected>Venezuela</option>
-                                        <option value="Internacional">Exportación Internacional</option>
-                                    </select>
-                                </div>
-                                <div>
-                                    <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Estado / Provincia *</label>
-                                    <select name="state" required class="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm bg-white">
+                                    <select name="country" id="country" required class="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm bg-white outline-none focus:border-indigo-500 transition-colors">
                                         <option value="">-- Seleccionar --</option>
-                                        @foreach($states as $state)
-                                            <option value="{{ $state }}">{{ $state }}</option>
+                                        @foreach($countries as $country)
+                                            <option value="{{ $country->name }}" data-id="{{ $country->id }}">{{ $country->name }}</option>
                                         @endforeach
                                     </select>
                                 </div>
                                 <div>
+                                    <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Estado / Provincia *</label>
+                                    <select name="state" id="state" required disabled class="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm bg-white disabled:bg-slate-100 disabled:cursor-not-allowed outline-none focus:border-indigo-500 transition-colors">
+                                        <option value="">Primero seleccione país</option>
+                                    </select>
+                                </div>
+                                <div>
                                     <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Ciudad *</label>
-                                    <input type="text" name="city" required class="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm">
+                                    <input type="text" name="city" required placeholder="Ciudad" class="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm outline-none focus:border-indigo-500 transition-colors">
                                 </div>
                             </div>
 
-                            <div>
-                                <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Dirección Detallada *</label>
-                                <textarea name="shipping_address" rows="2" required placeholder="Calle, edificio, punto de referencia..." class="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm"></textarea>
+                            <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
+                                <div class="md:col-span-3">
+                                    <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Dirección Exacta *</label>
+                                    <input type="text" name="shipping_address" required placeholder="Calle, edificio, punto de referencia..." class="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm outline-none focus:border-indigo-500 transition-colors">
+                                </div>
+                                <div>
+                                    <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Código Postal</label>
+                                    <input type="text" name="customer_zip" placeholder="Opcional" class="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm outline-none focus:border-indigo-500 transition-colors">
+                                </div>
                             </div>
                         </div>
                     </div>
 
-                    <!-- Contenido del Pedido (Filtrado Dinámicamente) -->
+                    <!-- Contenido del Pedido (SKUs) -->
                     <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
                         <div class="p-5 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
                             <h3 class="font-bold text-slate-700 text-sm uppercase tracking-wider">Productos y Cantidades</h3>
-                            <button type="button" onclick="addProductRow()" class="text-[10px] bg-custom-primary text-white px-3 py-1.5 rounded-lg font-bold hover:brightness-95 transition flex items-center gap-1 shadow-md shadow-blue-500/20">
-                                <i class="fa-solid fa-plus"></i> Agregar SKU
+                            <button type="button" id="addProductBtn" disabled onclick="addProductRow()" class="text-[10px] bg-indigo-600 text-white px-3 py-1.5 rounded-lg font-bold hover:brightness-95 transition flex items-center gap-1 shadow-md shadow-indigo-500/20 disabled:bg-slate-300 disabled:shadow-none disabled:cursor-not-allowed">
+                                <i data-lucide="plus" class="w-3 h-3"></i> Agregar SKU
                             </button>
                         </div>
                         <div class="overflow-x-auto">
@@ -125,7 +142,7 @@
                             </table>
                         </div>
                         <div id="emptyItems" class="p-12 text-center text-slate-400">
-                            <i class="fa-solid fa-cart-plus text-4xl mb-3 opacity-20"></i>
+                            <i data-lucide="shopping-cart" class="w-12 h-12 mx-auto mb-3 opacity-20"></i>
                             <p class="text-xs">Seleccione un cliente y agregue productos a la lista.</p>
                         </div>
                     </div>
@@ -134,34 +151,46 @@
                 <!-- COLUMNA DERECHA (1/3) -->
                 <div class="space-y-6">
                     <div class="bg-slate-800 text-white rounded-2xl p-6 shadow-xl sticky top-6 border border-white/5">
-                        <h3 class="font-bold text-lg mb-6 border-b border-white/10 pb-4">Control de Operación</h3>
+                        <h3 class="font-bold text-lg mb-6 border-b border-white/10 pb-4 flex items-center gap-2">
+                            <i data-lucide="settings" class="w-5 h-5 text-indigo-400"></i> Control Operativo
+                        </h3>
                         
                         <div class="mb-6 space-y-4">
                             <div>
-                                <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Método de Envío sugerido</label>
-                                <input type="text" name="shipping_method" placeholder="Ej: Zoom, MRW, Motorizado" class="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-xl text-xs text-white outline-none focus:border-blue-500">
+                                <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Referencia Externa (Opcional)</label>
+                                <input type="text" name="external_ref" placeholder="Ej: Shopify #1020" class="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-xl text-xs text-white outline-none focus:border-indigo-500 transition-colors placeholder:text-slate-500">
+                            </div>
+
+                            <div>
+                                <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Método de Envío</label>
+                                <select name="shipping_method" class="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-xl text-xs text-white outline-none focus:border-indigo-500 transition-colors">
+                                    <option value="">Seleccione Courier...</option>
+                                    @foreach($shippingMethods as $sm)
+                                        <option value="{{ $sm->name }}">{{ $sm->name }}</option>
+                                    @endforeach
+                                </select>
                             </div>
                             
                             <div>
                                 <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Instrucciones Especiales</label>
-                                <textarea name="notes" rows="4" class="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-xl text-xs text-white outline-none focus:border-blue-500" placeholder="Notas de picking o empaque..."></textarea>
+                                <textarea name="notes" rows="4" class="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-xl text-xs text-white outline-none focus:border-indigo-500 transition-colors placeholder:text-slate-500" placeholder="Notas de picking o empaque..."></textarea>
                             </div>
                         </div>
 
                         <div class="p-4 bg-white/5 rounded-xl border border-white/10 mb-8">
                             <div class="flex justify-between items-center text-xs mb-2">
                                 <span class="text-slate-400">Total SKUs:</span>
-                                <span id="totalSKUCount" class="font-bold text-blue-400">0</span>
+                                <span id="totalSKUCount" class="font-bold text-indigo-400">0</span>
                             </div>
                             <div class="flex justify-between items-center text-xs">
                                 <span class="text-slate-400">Unidades:</span>
-                                <span id="totalUnitsCount" class="font-bold text-blue-400">0</span>
+                                <span id="totalUnitsCount" class="font-bold text-indigo-400">0</span>
                             </div>
                         </div>
 
                         <div class="flex flex-col gap-3">
-                            <button type="submit" class="w-full bg-custom-primary text-white py-3.5 rounded-xl font-bold shadow-lg flex items-center justify-center gap-2 transition hover:brightness-110 active:scale-95">
-                                <i class="fa-solid fa-check-circle"></i> Procesar Pedido
+                            <button type="submit" class="w-full bg-indigo-600 text-white py-3.5 rounded-xl font-bold shadow-lg flex items-center justify-center gap-2 transition hover:brightness-110 active:scale-95">
+                                <i data-lucide="check-circle" class="w-4 h-4"></i> Procesar Pedido
                             </button>
                             <a href="{{ route('admin.orders.index') }}" class="w-full bg-slate-700 text-slate-300 py-3 rounded-xl font-bold text-center text-sm hover:bg-slate-600 transition">
                                 Cancelar
@@ -178,12 +207,12 @@
         <tr class="group hover:bg-slate-50 transition">
             <td class="px-6 py-4 text-center text-slate-400 font-mono text-xs row-index">1</td>
             <td class="px-6 py-4">
-                <select name="items[INDEX][product_id]" required onchange="handleProductSelect(this)" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white focus:ring-2 ring-custom-primary outline-none transition sku-selector">
-                    <!-- Opciones cargadas por JS segun cliente -->
+                <select name="items[INDEX][product_id]" required onchange="handleProductSelect(this)" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white focus:ring-2 ring-indigo-500 outline-none transition sku-selector">
+                    <option value="">-- Seleccionar SKU --</option>
                 </select>
                 <div class="mt-1 flex items-center gap-2">
                     <span class="text-[9px] font-bold text-slate-400 uppercase">Disponible:</span>
-                    <span class="text-[9px] font-black text-custom-primary stock-display">0 unidades</span>
+                    <span class="text-[9px] font-black text-indigo-600 stock-display">0 unidades</span>
                 </div>
             </td>
             <td class="px-6 py-4">
@@ -191,7 +220,7 @@
             </td>
             <td class="px-6 py-4 text-center">
                 <button type="button" onclick="removeRow(this)" class="text-slate-300 hover:text-red-500 transition">
-                    <i class="fa-solid fa-trash-can"></i>
+                    <i data-lucide="trash-2" class="w-4 h-4"></i>
                 </button>
             </td>
         </tr>
@@ -201,70 +230,92 @@
 
 @section('scripts')
 <script>
-    // Lista maestra de productos inyectada de forma segura para evitar ParseErrors
-    // SE ELIMINA EL FILTRO where('is_active', true) ya que la columna no existe en la base de datos
-    const allProducts = {!! \App\Models\Product::withSum('inventory as total_stock', 'quantity')->get()->toJson() !!};
+    let clientProducts = [];
     let rowIndex = 0;
 
-    /**
-     * Maneja el cambio de cliente
-     */
-    function handleClientChange() {
-        const container = document.getElementById('itemsContainer');
-        
-        if (container.children.length > 0) {
-            if (confirm("Si cambia de cliente, se eliminarán los productos actuales de la lista. ¿Desea continuar?")) {
+    document.addEventListener('DOMContentLoaded', function() {
+        lucide.createIcons();
+        const countrySelect = document.getElementById('customer_country');
+        const stateSelect = document.getElementById('customer_state');
+        const clientSelect = document.getElementById('client_id');
+
+        // 1. Manejo dinámico de Estados
+        countrySelect.addEventListener('change', function() {
+            const selectedOption = this.options[this.selectedIndex];
+            const countryId = selectedOption.getAttribute('data-id');
+            
+            stateSelect.innerHTML = '<option value="">Cargando...</option>';
+            stateSelect.disabled = true;
+
+            if (countryId) {
+                // Usamos la URL absoluta generada por Blade para evitar errores 404 por prefijos
+                const url = `{{ url('/admin/inventory/get-states') }}/${countryId}`;
+                
+                fetch(url)
+                    .then(response => {
+                        if (!response.ok) throw new Error('Network response was not ok');
+                        return response.json();
+                    })
+                    .then(data => {
+                        stateSelect.innerHTML = '<option value="">-- Seleccionar Estado --</option>';
+                        data.forEach(s => {
+                            stateSelect.innerHTML += `<option value="${s.name}">${s.name}</option>`;
+                        });
+                        stateSelect.disabled = false;
+                    })
+                    .catch(error => {
+                        console.error('Error fetching states:', error);
+                        stateSelect.innerHTML = '<option value="">Error al cargar estados</option>';
+                    });
+            } else {
+                stateSelect.innerHTML = '<option value="">Primero seleccione país</option>';
+            }
+        });
+
+        // 2. Manejo dinámico de Productos por Cliente
+        clientSelect.addEventListener('change', function() {
+            const clientId = this.value;
+            const container = document.getElementById('itemsContainer');
+            const addBtn = document.getElementById('addProductBtn');
+            
+            if(container.children.length > 0) {
+                if(!confirm("Cambiar el cliente eliminará los productos actuales de la lista. ¿Continuar?")) {
+                    return;
+                }
                 container.innerHTML = '';
                 document.getElementById('emptyItems').classList.remove('hidden');
                 updateCalculations();
             }
-        }
-    }
 
-    /**
-     * Al seleccionar un SKU, actualizamos el límite de la cantidad según el stock
-     */
-    function handleProductSelect(selectElement) {
-        const productId = selectElement.value;
-        const row = selectElement.closest('tr');
-        const stockDisplay = row.querySelector('.stock-display');
-        const qtyInput = row.querySelector('.qty-input');
-        
-        const product = allProducts.find(p => p.id == productId);
-        
-        if (product) {
-            const stock = parseInt(product.total_stock) || 0;
-            stockDisplay.innerText = `${stock} unidades`;
-            qtyInput.max = stock; // Limitamos el input al stock real
-            
-            if (parseInt(qtyInput.value) > stock) {
-                qtyInput.value = stock;
+            if (clientId) {
+                const url = `{{ url('/admin/orders/get-client-products') }}/${clientId}`;
+                
+                fetch(url)
+                    .then(response => {
+                        if (!response.ok) throw new Error('Network response was not ok');
+                        return response.json();
+                    })
+                    .then(data => {
+                        clientProducts = data;
+                        addBtn.disabled = false;
+                        if(data.length === 0) {
+                             alert("Este cliente no tiene productos con stock disponible.");
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error fetching products:', error);
+                        alert("Error al cargar los productos del cliente.");
+                        addBtn.disabled = true;
+                    });
+            } else {
+                clientProducts = [];
+                addBtn.disabled = true;
             }
-        } else {
-            stockDisplay.innerText = '0 unidades';
-            qtyInput.max = 0;
-        }
-        updateCalculations();
-    }
+        });
+    });
 
-    /**
-     * Agrega una nueva fila de producto filtrada por cliente y con STOCK > 0
-     */
     function addProductRow() {
-        const clientId = document.getElementById('client_id').value;
-        
-        if (!clientId) {
-            alert("Por favor, seleccione primero el Dueño de la Mercancía (Cliente).");
-            return;
-        }
-
-        // Filtramos: 1. Que pertenezca al cliente. 2. Que tenga STOCK > 0.
-        const filteredProducts = allProducts.filter(p => p.client_id == clientId && (parseInt(p.total_stock) > 0));
-        
-        if (filteredProducts.length === 0) {
-            alert("Este cliente no tiene productos con stock disponible en bodega.");
-            return;
-        }
+        if(clientProducts.length === 0) return;
 
         rowIndex++;
         const container = document.getElementById('itemsContainer');
@@ -275,51 +326,67 @@
 
         const clone = template.content.cloneNode(true);
         const row = clone.querySelector('tr');
-        row.innerHTML = row.innerHTML.replace(/INDEX/g, rowIndex);
-        row.querySelector('.row-index').innerText = container.children.length + 1;
         
-        // Poblar el selector de SKUs
+        row.innerHTML = row.innerHTML.replace(/INDEX/g, rowIndex);
+        
         const select = row.querySelector('.sku-selector');
-        select.innerHTML = '<option value="">-- Seleccionar SKU --</option>';
-        filteredProducts.forEach(p => {
-            const option = document.createElement('option');
-            option.value = p.id;
-            option.textContent = `${p.sku} | ${p.name} (Stock: ${parseInt(p.total_stock)})`;
-            select.appendChild(option);
+        clientProducts.forEach(p => {
+            const opt = document.createElement('option');
+            opt.value = p.id;
+            opt.textContent = `${p.sku} | ${p.name} (Stock: ${p.stock_available})`;
+            select.appendChild(opt);
         });
 
         container.appendChild(row);
+        updateRowNumbers();
+        lucide.createIcons();
         updateCalculations();
     }
 
-    function removeRow(button) {
-        const row = button.closest('tr');
-        row.remove();
+    function handleProductSelect(select) {
+        const prodId = select.value;
+        const row = select.closest('tr');
+        const display = row.querySelector('.stock-display');
+        const input = row.querySelector('.qty-input');
         
+        const prod = clientProducts.find(p => p.id == prodId);
+        if(prod) {
+            display.innerText = `${prod.stock_available} unidades`;
+            input.max = prod.stock_available;
+            if(parseInt(input.value) > prod.stock_available) input.value = prod.stock_available;
+        } else {
+            display.innerText = '0 unidades';
+            input.max = 0;
+        }
+        updateCalculations();
+    }
+
+    function removeRow(btn) {
+        btn.closest('tr').remove();
         const container = document.getElementById('itemsContainer');
         if (container.children.length === 0) {
             document.getElementById('emptyItems').classList.remove('hidden');
         }
-        
-        document.querySelectorAll('#itemsContainer tr').forEach((r, idx) => {
-            r.querySelector('.row-index').innerText = idx + 1;
-        });
-        
+        updateRowNumbers();
         updateCalculations();
     }
 
+    function updateRowNumbers() {
+        document.querySelectorAll('#itemsContainer tr').forEach((r, idx) => {
+            r.querySelector('.row-index').innerText = idx + 1;
+        });
+    }
+
     function updateCalculations(input = null) {
-        // Validación visual de exceso de stock si se disparó desde un input
         if (input && input.max && parseInt(input.value) > parseInt(input.max)) {
             input.value = input.max;
         }
 
         const rows = document.querySelectorAll('#itemsContainer tr');
         let totalUnits = 0;
-        
-        rows.forEach(row => {
-            const qtyInput = row.querySelector('.qty-input');
-            if(qtyInput.value) totalUnits += parseInt(qtyInput.value);
+        rows.forEach(r => {
+            const q = r.querySelector('.qty-input').value;
+            if(q) totalUnits += parseInt(q);
         });
 
         document.getElementById('totalSKUCount').innerText = rows.length;

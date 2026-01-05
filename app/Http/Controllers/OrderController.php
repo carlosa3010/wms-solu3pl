@@ -12,6 +12,7 @@ use App\Models\Product;
 use App\Models\Branch;
 use App\Models\Country;
 use App\Models\State;
+use App\Models\ShippingMethod;
 use App\Models\Transfer; 
 use App\Models\TransferItem;
 use Illuminate\Support\Str;
@@ -20,7 +21,7 @@ use Illuminate\Support\Facades\DB;
 class OrderController extends Controller
 {
     /**
-     * Listado principal de órdenes.
+     * Listado principal de órdenes para administración.
      */
     public function index(Request $request)
     {
@@ -40,23 +41,77 @@ class OrderController extends Controller
     }
 
     /**
+     * Muestra el formulario de creación de pedidos (Lado Admin).
+     */
+    public function create()
+    {
+        $clients = Client::where('is_active', true)->orderBy('company_name')->get();
+        $countries = Country::orderBy('name')->get();
+        $shippingMethods = ShippingMethod::where('is_active', true)->get();
+        $branches = Branch::where('is_active', true)->get();
+
+        // Generar número de orden automático (Correlativo)
+        $lastOrder = Order::latest('id')->first();
+        $nextId = $lastOrder ? $lastOrder->id + 1 : 1;
+        $nextOrderNumber = 'ORD-' . str_pad($nextId, 6, '0', STR_PAD_LEFT);
+
+        return view('admin.operations.orders.create', compact('clients', 'countries', 'shippingMethods', 'branches', 'nextOrderNumber'));
+    }
+
+    /**
+     * Obtiene los productos de un cliente vía AJAX.
+     * Solo devuelve productos que tengan stock físico en alguna sede.
+     */
+    public function getClientProducts($clientId)
+    {
+        $products = Product::where('client_id', $clientId)
+            ->withSum('inventory as stock_available', 'quantity')
+            ->get()
+            ->filter(fn($p) => $p->stock_available > 0)
+            ->values();
+
+        return response()->json($products);
+    }
+
+    /**
+     * Obtiene los estados de un país vía AJAX.
+     */
+    public function getStatesByCountry($countryId)
+    {
+        $states = State::where('country_id', $countryId)->orderBy('name')->get();
+        return response()->json($states);
+    }
+
+    /**
      * Almacena la orden y ejecuta la INTELIGENCIA DE ASIGNACIÓN Y CONSOLIDACIÓN.
      */
     public function store(Request $request)
     {
+        // Validación ajustada a la estructura de la base de datos
         $request->validate([
             'client_id' => 'required|exists:clients,id',
             'order_number' => 'required|unique:orders,order_number',
-            'customer_name' => 'required|string',
-            'state' => 'required|string',
-            'country' => 'required|string',
+            'customer_name' => 'required|string|max:255',
+            'customer_id_number' => 'required|string|max:50', 
+            'shipping_address' => 'required|string',
+            'country' => 'required',
+            'state' => 'required',
+            'city' => 'required|string',
             'items' => 'required|array|min:1',
             'items.*.product_id' => 'required|exists:products,id',
             'items.*.qty' => 'required|integer|min:1',
         ]);
 
-        // Ejecutar el motor de decisión
-        $plan = $this->calculateAssignmentPlan($request->state, $request->country, $request->items);
+        // Mapeo de items para el motor de decisión
+        $mappedItems = array_map(function($item) {
+            return [
+                'product_id' => $item['product_id'],
+                'qty' => $item['qty']
+            ];
+        }, $request->items);
+
+        // Ejecutar el motor de decisión basado en el destino para elegir la mejor Sede
+        $plan = $this->calculateAssignmentPlan($request->customer_state, $request->customer_country, $mappedItems);
 
         if (!$plan['success']) {
             return back()->withInput()->withErrors(['error' => $plan['message']]);
@@ -64,23 +119,27 @@ class OrderController extends Controller
 
         try {
             $order = DB::transaction(function () use ($request, $plan) {
-                // 1. Crear la orden en la sede principal elegida
+                // 1. Crear la orden principal en la sede target elegida
                 $order = Order::create([
                     'order_number' => $request->order_number,
+                    'external_ref' => $request->external_ref, // Campo habilitado por migración
                     'client_id' => $request->client_id,
                     'branch_id' => $plan['target_branch_id'],
                     'customer_name' => $request->customer_name,
-                    'customer_id_number' => $request->customer_id_number,
+                    'customer_id_number' => $request->customer_id_number, // Campo habilitado por migración
                     'customer_email' => $request->customer_email,
                     'shipping_address' => $request->shipping_address,
                     'city' => $request->city,
                     'state' => $request->state,
+                    'customer_zip' => $request->customer_zip,
                     'country' => $request->country,
                     'phone' => $request->phone,
                     'shipping_method' => $request->shipping_method,
-                    'status' => $plan['requires_transfer'] ? 'waiting_transfer' : 'pending'
+                    'status' => $plan['requires_transfer'] ? 'waiting_transfer' : 'pending',
+                    'notes' => $request->notes,
                 ]);
 
+                // 2. Crear los ítems de la orden
                 foreach ($request->items as $itemData) {
                     OrderItem::create([
                         'order_id' => $order->id,
@@ -89,7 +148,7 @@ class OrderController extends Controller
                     ]);
                 }
 
-                // 2. Si hay un plan de traslado, ejecutar creación de documentos
+                // 3. Crear traslados automáticos si se requiere consolidación multisede
                 if ($plan['requires_transfer']) {
                     $this->createConsolidationTransfers($order, $plan['transfer_plan']);
                 }
@@ -97,11 +156,11 @@ class OrderController extends Controller
                 return $order;
             });
 
-            // 3. Reservar el stock que YA está en la sede destino (Picking Parcial o Total)
+            // 4. Reservar el stock disponible físicamente en la sede destino (Allocation/Picking)
             $this->performStockAllocation($order);
 
             $message = $plan['requires_transfer'] 
-                ? "Orden creada en espera de consolidación. Se generaron traslados para completar el stock en {$order->branch->name}."
+                ? "Orden creada en espera de consolidación. Se generaron traslados automáticos para completar el stock en {$order->branch->name}."
                 : "Orden asignada y stock reservado automáticamente en {$order->branch->name}.";
 
             return redirect()->route('admin.orders.index')->with('success', $message);
@@ -112,7 +171,7 @@ class OrderController extends Controller
     }
 
     /**
-     * MOTOR DE DECISIÓN: Evalúa sedes por stock total vs cercanía + traslados.
+     * MOTOR DE DECISIÓN: Evalúa sedes por stock total vs cercanía geográfica.
      */
     private function calculateAssignmentPlan($destState, $destCountry, $requestedItems)
     {
@@ -121,7 +180,7 @@ class OrderController extends Controller
 
         foreach ($branches as $branch) {
             $geoScore = $this->calculateGeoScore($branch, $destState, $destCountry);
-            if ($geoScore === 0) continue; // Sede no cubre el país
+            if ($geoScore === 0) continue; 
 
             $fulfillment = $this->evaluateStockFulfillment($branch->id, $requestedItems);
             
@@ -137,7 +196,7 @@ class OrderController extends Controller
             return ['success' => false, 'message' => 'No hay sedes con cobertura para esta zona geográfica.'];
         }
 
-        // REGLA 1: Si hay sedes con 100% de stock, elegir la más cercana de ellas
+        // REGLA 1: Priorizar sede con stock 100% y mayor cercanía (GeoScore)
         $fullStockCandidates = collect($branchEvaluations)->where('is_full_stock', true)->sortByDesc('geo_score');
         if ($fullStockCandidates->isNotEmpty()) {
             return [
@@ -148,7 +207,7 @@ class OrderController extends Controller
             ];
         }
 
-        // REGLA 2: Nadie tiene 100% de stock. Elegir la sede más cercana (Target) y planear traslados
+        // REGLA 2: Si nadie tiene 100%, elegir la sede más cercana (Target) y planear traslados desde otras sedes
         $bestGeoBranch = collect($branchEvaluations)->sortByDesc('geo_score')->first();
         $targetBranchId = $bestGeoBranch['branch']->id;
         $transferPlan = [];
@@ -156,12 +215,12 @@ class OrderController extends Controller
         foreach ($requestedItems as $item) {
             $prodId = $item['product_id'];
             $needed = $item['qty'];
-            $stockInTarget = $bestGeoBranch['fulfillment_data']['items'][$prodId]['available'];
+            $stockInTarget = $bestGeoBranch['fulfillment_data']['items'][$prodId]['available'] ?? 0;
 
             if ($stockInTarget < $needed) {
                 $toTransfer = $needed - $stockInTarget;
                 
-                // Buscar quién tiene este SKU sobrante
+                // Buscar quién tiene este SKU sobrante para enviarlo a la sede Target
                 $sources = Branch::where('id', '!=', $targetBranchId)->where('is_active', true)->get();
                 foreach ($sources as $source) {
                     if ($toTransfer <= 0) break;
@@ -181,7 +240,7 @@ class OrderController extends Controller
 
                 if ($toTransfer > 0) {
                     $p = Product::find($prodId);
-                    return ['success' => false, 'message' => "Ni sumando todas las sedes se alcanza el stock para: {$p->sku} (Faltan {$toTransfer})"];
+                    return ['success' => false, 'message' => "Ni sumando todas las sedes se alcanza el stock para: " . ($p->sku ?? 'Desconocido') . " (Faltan {$toTransfer})"];
                 }
             }
         }
@@ -212,7 +271,7 @@ class OrderController extends Controller
     }
 
     /**
-     * Crea las órdenes de traslado necesarias para la consolidación.
+     * Crea las órdenes de traslado necesarias para la consolidación automática.
      */
     private function createConsolidationTransfers(Order $order, $plan)
     {
@@ -246,7 +305,7 @@ class OrderController extends Controller
         if ($branch->country === $destCountry && $branch->state === $destState) return 100;
         if (is_array($branch->covered_states) && in_array($destState, $branch->covered_states)) return 80;
         if ($branch->country === $destCountry) return 50;
-        return 20; // Atiende el país pero desde lejos
+        return 20; 
     }
 
     private function getStockInBranch($productId, $branchId) {
@@ -257,7 +316,7 @@ class OrderController extends Controller
     }
 
     /**
-     * Realiza la reserva física de stock en bines (Picking).
+     * Realiza la reserva física de stock en bines (Allocation).
      */
     private function performStockAllocation(Order $order)
     {

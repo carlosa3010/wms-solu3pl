@@ -14,23 +14,22 @@ class Order extends Model
      * Se incluye is_premium_packing para disparar la lógica de cobro extra en el ShippingController.
      */
     protected $fillable = [
-        'client_id',
-        'branch_id',
-        'order_number',
-        'reference_number',
-        'customer_name',
-        'customer_address',
-        'customer_city',
-        'customer_state',
-        'customer_zip',
-        'customer_country',
-        'customer_phone',
-        'customer_email',
-        'shipping_method',
-        'is_premium_packing', // Identificador de servicio extra
-        'notes',
-        'status',
-        'shipped_at'
+    'order_number',
+    'external_ref', // Añadir este
+    'client_id',
+    'branch_id',
+    'customer_name',
+    'customer_id_number', // Añadir este
+    'customer_email',
+    'customer_phone',
+    'shipping_address',
+    'city',
+    'state',
+    'customer_zip',
+    'country',
+    'shipping_method',
+    'status',
+    'notes',
     ];
 
     protected $casts = [

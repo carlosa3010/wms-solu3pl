@@ -110,6 +110,9 @@ Route::middleware(['auth'])->group(function () {
             Route::get('/get-sources', [InventoryController::class, 'getSources'])->name('inventory.get_sources');
             Route::get('/get-bins', [InventoryController::class, 'getBins'])->name('inventory.get_bins');
             
+            // RUTA AÑADIDA: Obtener estados por país para AJAX
+            Route::get('/get-states/{countryId}', [OrderController::class, 'getStatesByCountry'])->name('get_states');
+            
             // Ruta principal del mapa
             Route::get('/map', [WarehouseManagementController::class, 'index'])->name('inventory.map');
         });
@@ -159,6 +162,9 @@ Route::middleware(['auth'])->group(function () {
             Route::post('/{id}/allocate', [OrderController::class, 'executeAllocation'])->name('orders.allocate');
             Route::get('/{id}/picking-list', [OrderController::class, 'printPickingList'])->name('orders.picking');
             Route::post('/{id}/fulfill', [OrderController::class, 'fulfill'])->name('orders.fulfill');
+            
+            // RUTA AÑADIDA: Obtener productos por cliente para AJAX
+            Route::get('/get-client-products/{clientId}', [OrderController::class, 'getClientProducts'])->name('get_client_products');
         });
 
         Route::prefix('shipping')->group(function () {
@@ -188,27 +194,21 @@ Route::middleware(['auth'])->group(function () {
             Route::post('/{id}/process', [RMAController::class, 'process'])->name('rma.process');
         });
 
-        // =========================================================
-        // MÓDULO: FINANZAS (Billing) - UNIFICADO Y COMPLETO
-        // =========================================================
+        // MÓDULO: FINANZAS (Billing)
         Route::prefix('billing')->name('billing.')->group(function () {
-            // Dashboard y Pagos (BillingController)
             Route::get('/', [BillingController::class, 'index'])->name('index');
             Route::get('/payments', [BillingController::class, 'paymentsIndex'])->name('payments.index');
             Route::post('/payments/{id}/approve', [BillingController::class, 'approvePayment'])->name('payments.approve');
             Route::post('/payments/{id}/reject', [BillingController::class, 'rejectPayment'])->name('payments.reject');
             Route::post('/payments/manual', [BillingController::class, 'storeManualPayment'])->name('payments.manual.store');
             
-            // Gestión de Tarifas y Planes (ServicePlanController)
             Route::get('/rates', [ServicePlanController::class, 'index'])->name('rates');
             Route::post('/rates', [ServicePlanController::class, 'store'])->name('rates.store');
             Route::delete('/rates/{id}', [ServicePlanController::class, 'destroyPlan'])->name('rates.destroy');
             
-            // Gestión de Acuerdos (ServicePlanController)
             Route::post('/assign-agreement', [ServicePlanController::class, 'assignPlan'])->name('assign_agreement');
             Route::delete('/agreement/{id}', [ServicePlanController::class, 'destroyAgreement'])->name('agreement.destroy');
             
-            // Facturación y Cierres (BillingController)
             Route::get('/pre-invoice/{clientId}', [BillingController::class, 'downloadPreInvoice'])->name('pre_invoice');
             Route::post('/run-daily', [BillingController::class, 'runDailyBilling'])->name('run_daily');
         });
@@ -246,9 +246,7 @@ Route::middleware(['auth'])->group(function () {
         });
     });
 
-    // ==========================================
-    // ÁREA DEL CLIENTE (portal/)
-    // ==========================================
+    // PORTAL CLIENTES
     Route::prefix('portal')->name('client.')->group(function () {
         Route::get('/dashboard', [ClientPortalController::class, 'dashboard'])->name('portal');
         
@@ -285,7 +283,7 @@ Route::middleware(['auth'])->group(function () {
             Route::post('/{id}/action', [ClientPortalController::class, 'rmaAction'])->name('rma.action');
         });
         
-        // Facturación y Billetera Cliente
+        // Facturación Cliente
         Route::prefix('billing')->group(function () {
             Route::get('/', [ClientPortalController::class, 'billing'])->name('billing.index');
             Route::post('/payment', [ClientPortalController::class, 'storePayment'])->name('billing.store_payment');
@@ -301,6 +299,5 @@ Route::middleware(['auth'])->group(function () {
         Route::get('/support', [ClientPortalController::class, 'support'])->name('support');
     });
 
-    // Estación de Trabajo
     Route::get('/warehouse/station', [DashboardController::class, 'warehouseStation'])->name('warehouse.station');
 });
