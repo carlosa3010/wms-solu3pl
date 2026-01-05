@@ -4,23 +4,76 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Location extends Model
 {
-    use HasFactory;
+    use HasFactory, SoftDeletes;
 
     /**
      * Atributos asignables masivamente.
      */
     protected $fillable = [
-        'warehouse_id', 
-        'bin_type_id', // Relación con las dimensiones físicas
-        'code',        // Código único de ubicación (Ej: B1-P01-A-R01-N1-B1)
-        'type',        // rack, floor, reception, etc.
-        'aisle',       // Pasillo
-        'rack',        // Columna de Rack
-        'shelf'        // Nivel / Altura
+        'warehouse_id',
+        'bin_type_id',    // Relación con las dimensiones físicas
+        'code',           // Código único de ubicación (Ej: SUC-BOD-PAS-LAD-RACK-NIV-BIN)
+        'type',           // storage, picking, staging, dock, etc.
+        
+        // Nuevos campos jerárquicos (Ajustado a tu requerimiento de Migración)
+        'aisle',          // Pasillo
+        'side',           // Lado (Agregado para evitar errores)
+        'rack',           // Rack
+        'level',          // Nivel (Equivalente a 'shelf')
+        'position',       // Posición/Bin
+        
+        'status',         // active, inactive, maintenance
+        'description'
     ];
+
+    /**
+     * Boot function para lógica automática al guardar.
+     * Genera la nomenclatura automáticamente: Sucursal-Bodega-Pasillo-Lado-Rack-Nivel-Bin
+     */
+    protected static function boot()
+    {
+        parent::boot();
+
+        static::saving(function ($location) {
+            // Solo regenera si tenemos los componentes jerárquicos completos
+            if ($location->aisle && $location->rack && $location->level && $location->position) {
+                
+                // Cargar relaciones si no están cargadas para obtener códigos padres
+                if (!$location->relationLoaded('warehouse')) {
+                    $location->load('warehouse.branch');
+                }
+
+                $branchCode = $location->warehouse->branch->code ?? 'GEN';
+                $whCode = $location->warehouse->code ?? 'WH';
+                
+                // Lógica de construcción del código
+                $parts = [
+                    $branchCode,
+                    $whCode,
+                    $location->aisle,
+                ];
+
+                if ($location->side) {
+                    $parts[] = $location->side;
+                }
+
+                $parts[] = $location->rack;
+                $parts[] = $location->level;
+                $parts[] = $location->position;
+
+                // Unir con guiones
+                $location->code = implode('-', $parts);
+            }
+        });
+    }
+
+    /* -------------------------------------------------------------------------- */
+    /* RELACIONES                                 */
+    /* -------------------------------------------------------------------------- */
 
     /**
      * Relación: La ubicación pertenece a una Bodega específica.
@@ -40,10 +93,16 @@ class Location extends Model
 
     /**
      * Relación: Stock físico real almacenado actualmente en este bin.
+     * (Mantenemos 'inventory' como estándar de Laravel y 'stock' como alias por compatibilidad)
      */
-    public function stock()
+    public function inventory()
     {
         return $this->hasMany(Inventory::class, 'location_id');
+    }
+
+    public function stock()
+    {
+        return $this->inventory(); // Alias para compatibilidad con tu código existente
     }
 
     /**
@@ -64,11 +123,16 @@ class Location extends Model
         return $this->hasMany(ASNAllocation::class, 'location_id');
     }
 
+    /* -------------------------------------------------------------------------- */
+    /* HELPERS                                   */
+    /* -------------------------------------------------------------------------- */
+
     /**
      * Helper: Calcula el stock total en esta ubicación.
      */
     public function getTotalQuantityAttribute()
     {
+        // Usamos stock() o inventory() indistintamente
         return $this->stock()->sum('quantity');
     }
 
@@ -78,5 +142,18 @@ class Location extends Model
     public function getIsEmptyAttribute()
     {
         return $this->total_quantity <= 0;
+    }
+
+    /**
+     * Helper: Obtiene dimensiones para el Mapa 3D/2D
+     */
+    public function getDimensionsAttribute()
+    {
+        return $this->binType ? [
+            'width' => $this->binType->width,
+            'height' => $this->binType->height,
+            'depth' => $this->binType->depth,
+            'weight_capacity' => $this->binType->weight_capacity
+        ] : null;
     }
 }

@@ -109,35 +109,37 @@ Route::middleware(['auth'])->group(function () {
             Route::get('/get-sources', [InventoryController::class, 'getSources'])->name('inventory.get_sources');
             Route::get('/get-bins', [InventoryController::class, 'getBins'])->name('inventory.get_bins');
             
-            // Ruta principal del mapa (la que carga la vista map.blade.php)
+            // Ruta principal del mapa
             Route::get('/map', [WarehouseManagementController::class, 'index'])->name('inventory.map');
         });
 
         // Módulo: Infraestructura (Sucursales y Bodegas)
         Route::get('/branches', [WarehouseManagementController::class, 'index'])->name('branches.index');
-        // Route::get('/warehouses', [WarehouseManagementController::class, 'index'])->name('warehouses.index'); // Conflictiva si usas resource abajo
-
         Route::get('/coverage', [WarehouseManagementController::class, 'coverage'])->name('coverage.index');
         Route::put('/branches/{id}/coverage', [WarehouseManagementController::class, 'updateCoverage'])->name('branches.coverage');
         
-        // --- RUTAS DEL MAPA Y RACKS (AGREGADAS/AJUSTADAS) ---
-        Route::get('warehouses/rack-details', [WarehouseManagementController::class, 'getRackDetails'])->name('warehouses.rack_details');
+        // --- RUTAS CRÍTICAS DEL MAPA Y LAYOUT (Orden Corregido) ---
+        // IMPORTANTE: Estas rutas deben ir ANTES de las rutas con {id} para evitar conflictos de "Method not supported"
+        
+        // 1. Acciones Específicas (POST/GET sin parámetros variables al inicio)
+        Route::post('warehouses/generate-layout', [WarehouseManagementController::class, 'generateLayout'])->name('warehouses.generate_layout');
         Route::post('warehouses/save-rack', [WarehouseManagementController::class, 'saveRack'])->name('warehouses.save_rack');
-        // ----------------------------------------------------
-
-        // Operaciones de Sucursales y Bodegas (Manuales para evitar conflictos de resource si es necesario)
-        Route::post('/branches', [WarehouseManagementController::class, 'store'])->name('branches.store'); // Usa store del controller (para Branch)
+        Route::get('warehouses/rack-details', [WarehouseManagementController::class, 'getRackDetails'])->name('warehouses.rack_details');
+        
+        // 2. Rutas con {id} específico para datos del mapa
+        Route::get('warehouses/{id}/layout-data', [WarehouseManagementController::class, 'getLayoutData'])->name('warehouses.layout_data');
+        Route::get('warehouses/{id}/labels', [WarehouseManagementController::class, 'printLabels'])->name('warehouses.labels');
+        
+        // 3. Operaciones CRUD Genéricas (Sucursales)
+        Route::post('/branches', [WarehouseManagementController::class, 'store'])->name('branches.store');
         Route::put('/branches/{branch}', [WarehouseManagementController::class, 'update'])->name('branches.update');
         Route::delete('/branches/{branch}', [WarehouseManagementController::class, 'destroy'])->name('branches.destroy');
         
-        // Operaciones de Bodegas
-        // Nota: Asegúrate de que WarehouseManagementController tenga un método storeWarehouse o que uses una lógica condicional en store()
-        // Aquí asumimos que usas 'storeWarehouse' como definimos en el chat anterior, o 'store' si separaste controladores.
-        // Mantenemos nombres estandar de resource manual:
+        // 4. Operaciones CRUD Genéricas (Bodegas) - Al final para que {id} no capture 'generate-layout'
         Route::post('/warehouses', [WarehouseManagementController::class, 'storeWarehouse'])->name('warehouses.store'); 
-        Route::put('/warehouses/{id}', [WarehouseManagementController::class, 'updateWarehouse'])->name('warehouses.update'); // Asumiendo updateWarehouse existe o usar update con lógica
+        Route::put('/warehouses/{id}', [WarehouseManagementController::class, 'updateWarehouse'])->name('warehouses.update'); 
         Route::delete('/warehouses/{id}', [WarehouseManagementController::class, 'destroyWarehouse'])->name('warehouses.destroy');
-        Route::get('/warehouses/{id}/labels', [WarehouseManagementController::class, 'printLabels'])->name('warehouses.labels'); // Nombre corregido para coincidir con map.blade.php
+        // ----------------------------------------------------
 
         // Módulo: Operaciones
         Route::prefix('receptions')->group(function () {
@@ -202,7 +204,7 @@ Route::middleware(['auth'])->group(function () {
             
             Route::get('/rates', [BillingController::class, 'rates'])->name('billing.rates');
             Route::post('/rates', [BillingController::class, 'storeProfile'])->name('billing.rates.store');
-            Route::post('/rates/update', [BillingController::class, 'updateRates'])->name('billing.rates.update'); // Asegúrate que coincida
+            Route::post('/rates/update', [BillingController::class, 'updateRates'])->name('billing.rates.update'); 
             Route::post('/assign-agreement', [BillingController::class, 'assignAgreement'])->name('billing.assign_agreement');
             Route::get('/pre-invoice/{clientId}', [BillingController::class, 'downloadPreInvoice'])->name('billing.pre_invoice');
             Route::post('/generate', [BillingController::class, 'generateInvoices'])->name('billing.generate');
@@ -307,7 +309,7 @@ Route::middleware(['auth'])->group(function () {
 
         // --- ESTÁTICOS ---
         Route::get('/api-docs', [ClientPortalController::class, 'api'])->name('api');
-        Route::get('/api-access', [ClientPortalController::class, 'apiAccess'])->name('api.access'); // Corregido nombre
+        Route::get('/api-access', [ClientPortalController::class, 'apiAccess'])->name('api.access'); 
         Route::post('/api-access/tokens', [ClientPortalController::class, 'createToken'])->name('api.tokens.create');
         Route::delete('/api-access/tokens/{token}', [ClientPortalController::class, 'deleteToken'])->name('api.tokens.delete');
 
@@ -316,4 +318,3 @@ Route::middleware(['auth'])->group(function () {
 
     Route::get('/warehouse/station', [DashboardController::class, 'warehouseStation'])->name('warehouse.station');
 });
-
