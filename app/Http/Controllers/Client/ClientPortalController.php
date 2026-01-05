@@ -11,7 +11,8 @@ use App\Models\ASNItem;
 use App\Models\Order;
 use App\Models\OrderItem;
 use App\Models\RMA;
-use App\Models\Invoice;
+use App\Models\Invoice; // Asegúrate de que este modelo apunte a la tabla correcta (o PreInvoice si es lo que usas)
+use App\Models\PreInvoice; // Agregado para la lógica de facturación nueva
 use App\Models\ServiceCharge;
 use App\Models\Category;
 use App\Models\PaymentMethod;
@@ -19,38 +20,69 @@ use App\Models\ShippingMethod;
 use App\Models\Client;
 use App\Models\Country;
 use App\Models\State;
+use App\Services\BillingService; // Importamos el servicio de facturación
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 class ClientPortalController extends Controller
 {
+    protected $billingService;
+
+    // Inyectamos el BillingService
+    public function __construct(BillingService $billingService)
+    {
+        $this->billingService = $billingService;
+    }
+
     /**
      * Dashboard Principal: Resumen operativo y financiero.
      */
     public function dashboard()
     {
-        $clientId = auth()->user()->client_id;
-        if (!$clientId) {
+        $user = Auth::user();
+        $client = $user->client;
+
+        if (!$client) {
             return redirect()->route('login')->with('error', 'Usuario no vinculado a un cliente.');
         }
 
+        $clientId = $client->id;
+
+        // Datos Operativos
         $productsCount = Product::where('client_id', $clientId)->count();
         $pendingRmas = RMA::where('client_id', $clientId)->where('status', 'pending')->count();
         
-        // Contar ASNs que están en camino o procesándose
+        // Contar ASNs activos
         $activeAsns = ASN::where('client_id', $clientId)
             ->whereIn('status', ['sent', 'processing', 'receiving'])
             ->count();
         
-        $corteCuenta = ServiceCharge::where('client_id', $clientId)
-            ->whereMonth('created_at', now()->month)
-            ->whereYear('created_at', now()->year)
-            ->sum('amount');
-
         $recentOrders = Order::where('client_id', $clientId)->latest()->take(5)->get();
+        $stockCount = Inventory::whereHas('product', fn($q) => $q->where('client_id', $clientId))->sum('quantity');
 
-        return view('client.portal', compact('productsCount', 'pendingRmas', 'activeAsns', 'corteCuenta', 'recentOrders'));
+        // Datos Financieros (NUEVO)
+        // 1. Gasto Acumulado del Mes (Pre-factura abierta)
+        $currentMonthInvoice = PreInvoice::where('client_id', $clientId)
+            ->where('period_month', now()->format('Y-m'))
+            ->first();
+        $currentSpend = $currentMonthInvoice ? $currentMonthInvoice->total_amount : 0;
+
+        // 2. Saldo en Billetera
+        $wallet = $this->billingService->getWallet($clientId);
+
+        // 'corteCuenta' se mantiene como referencia histórica o se puede reemplazar por $currentSpend
+        $corteCuenta = $currentSpend; 
+
+        return view('client.portal', compact(
+            'productsCount', 
+            'pendingRmas', 
+            'activeAsns', 
+            'corteCuenta', // Gasto del mes
+            'recentOrders',
+            'stockCount',
+            'wallet' // Objeto billetera con saldo
+        ));
     }
 
     /**
@@ -301,7 +333,6 @@ class ClientPortalController extends Controller
 
     /**
      * Almacena el ASN generado por el cliente.
-     * MEJORADO: Generación automática de ID y estado 'sent'.
      */
     public function storeAsn(Request $request)
     {
@@ -318,17 +349,16 @@ class ClientPortalController extends Controller
 
         try {
             $asn = DB::transaction(function () use ($request, $clientId) {
-                // GENERACIÓN AUTOMÁTICA DE ID ÚNICO
                 $asnNumber = 'ASN-' . strtoupper(Str::random(8));
 
                 $asn = ASN::create([
                     'client_id' => $clientId,
                     'asn_number' => $asnNumber,
-                    'reference_number' => $request->reference_number, // Requiere ALTER TABLE
+                    'reference_number' => $request->reference_number,
                     'expected_arrival_date' => $request->expected_arrival_date,
-                    'total_packages' => $request->total_packages, // Requiere ALTER TABLE
+                    'total_packages' => $request->total_packages,
                     'notes' => $request->notes,
-                    'status' => 'sent', // Visible inmediatamente para el almacén
+                    'status' => 'sent',
                 ]);
 
                 foreach ($request->items as $item) {
@@ -395,60 +425,119 @@ class ClientPortalController extends Controller
     }
 
     /**
-     * Facturación y Reporte de Pagos.
+     * Facturación y Reporte de Pagos (Vista Principal).
+     * Muestra facturas mensuales y billetera.
      */
     public function billing()
     {
-        $clientId = auth()->user()->client_id;
-        $invoices = Invoice::where('client_id', $clientId)->latest()->get();
-        $paymentMethodsRaw = PaymentMethod::where('is_active', true)->get();
+        $client = Auth::user()->client;
         
+        // Obtenemos facturas cerradas o emitidas (usando PreInvoice como modelo base)
+        $invoices = PreInvoice::where('client_id', $client->id)
+            ->whereIn('status', ['closed', 'invoiced']) // Solo mostrar facturas listas
+            ->orderBy('period_month', 'desc')
+            ->get();
+            
+        // Obtenemos la billetera y sus transacciones
+        $wallet = $this->billingService->getWallet($client->id);
+        
+        // Métodos de pago disponibles para reportar
+        $paymentMethodsRaw = PaymentMethod::where('is_active', true)->get();
         $paymentMethods = [];
         foreach($paymentMethodsRaw as $method) {
             $paymentMethods[$method->id] = ['name' => $method->name, 'details' => $method->details];
         }
         
-        return view('client.billing_index', compact('invoices', 'paymentMethods'));
+        return view('client.billing_index', compact('invoices', 'wallet', 'paymentMethods'));
     }
 
+    /**
+     * Reportar Pago (Factura o Recarga).
+     */
     public function storePayment(Request $request)
     {
         $clientId = auth()->user()->client_id;
-        $request->validate(['payment_method' => 'required', 'amount' => 'required', 'proof_file' => 'required|file']);
+        
+        $request->validate([
+            'payment_method' => 'required|exists:payment_methods,id',
+            'amount' => 'required|numeric|min:1',
+            'proof_file' => 'required|file|mimes:jpg,jpeg,png,pdf|max:2048',
+            'type' => 'required|in:invoice,wallet', // Nuevo: Tipo de pago
+            'invoice_id' => 'required_if:type,invoice|exists:pre_invoices,id', // Requerido si es factura
+        ]);
         
         $path = $request->file('proof_file')->store('payments', 'public');
-        $methodName = PaymentMethod::find($request->payment_method)?->name ?? 'Desconocido';
+        $methodName = PaymentMethod::find($request->payment_method)->name;
+
+        // Construir referencia o concepto
+        $concept = $request->type === 'wallet' 
+            ? 'Recarga de Billetera' 
+            : 'Pago Factura #' . $request->invoice_id;
 
         DB::table('payments')->insert([
             'client_id' => $clientId,
             'amount' => $request->amount,
             'payment_method' => $methodName, 
             'payment_date' => $request->payment_date ?? now(),
-            'reference' => $request->reference,
+            'reference' => $request->reference ?? $concept,
             'proof_path' => $path,
-            'status' => 'pending',
+            'status' => 'pending', // Pendiente de aprobación por admin
+            'notes' => json_encode([
+                'type' => $request->type, 
+                'invoice_id' => $request->invoice_id
+            ]),
             'created_at' => now(),
             'updated_at' => now(),
         ]);
 
-        return redirect()->route('client.billing.index')->with('success', 'Pago reportado.');
+        return redirect()->route('client.billing.index')->with('success', 'Pago reportado correctamente. Esperando validación.');
     }
 
     /**
-     * Descargar Pre-factura (Servicios acumulados).
+     * Solicitud de Retiro de Billetera.
+     */
+    public function requestWithdrawal(Request $request)
+    {
+        $request->validate(['amount' => 'required|numeric|min:10']);
+        
+        try {
+            $clientId = Auth::user()->client_id;
+            // Llamamos al servicio para procesar la lógica del retiro y fee
+            $fee = $this->billingService->requestWithdrawal($clientId, $request->amount);
+            
+            return back()->with('success', "Retiro de $$request->amount solicitado. Se descontó un fee de $$fee de tu saldo.");
+        } catch (\Exception $e) {
+            return back()->with('error', $e->getMessage());
+        }
+    }
+
+    /**
+     * Descargar Pre-factura (Servicios acumulados del mes actual).
      */
     public function downloadPreInvoice()
     {
         $clientId = auth()->user()->client_id;
-        $client = Client::with(['serviceCharges' => fn($q) => $q->where('is_invoiced', false)])->findOrFail($clientId);
+        
+        // Buscar la pre-factura abierta del mes actual
+        $preInvoice = PreInvoice::where('client_id', $clientId)
+            ->where('period_month', now()->format('Y-m'))
+            ->with('details')
+            ->firstOrFail();
+            
         $data = [
-            'client' => $client,
-            'items' => $client->serviceCharges,
-            'total' => $client->serviceCharges->sum('amount'),
-            'title' => 'REPORTE DE SERVICIOS ACUMULADOS',
+            'client' => $preInvoice->client,
+            'items' => $preInvoice->details, // Usamos la relación 'details' de PreInvoice
+            'total' => $preInvoice->total_amount,
+            'title' => 'REPORTE DE CONSUMO (MES ACTUAL)',
             'is_draft' => true,
             'date' => now()->format('d/m/Y')
         ];
+        
+        if (class_exists('\Barryvdh\DomPDF\Facade\Pdf')) {
+             $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadView('admin.billing.pdf_template', $data);
+             return $pdf->download('Corte_Cuenta_' . now()->format('Y_m') . '.pdf');
+        }
+        
         return view('admin.billing.pdf_template', $data);
     }
 
