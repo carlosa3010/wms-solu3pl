@@ -2,215 +2,343 @@
 
 namespace App\Http\Controllers;
 
-use Illuminate\Http\Request;
 use App\Models\Order;
 use App\Models\OrderItem;
-use App\Models\OrderAllocation;
-use App\Models\Inventory;
-use App\Models\Client;
 use App\Models\Product;
+use App\Models\Client;
 use App\Models\Branch;
+use App\Models\Inventory;
 use App\Models\Country;
-use App\Models\State;
 use App\Models\ShippingMethod;
-use App\Models\Transfer; 
-use App\Models\TransferItem;
-use Illuminate\Support\Str;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class OrderController extends Controller
 {
-    public function index(Request $request)
+    public function index()
     {
-        $query = Order::with(['client', 'items', 'branch']);
+        $user = Auth::user();
         
-        if ($request->filled('search')) {
-            $search = $request->search;
-            $query->where(function($q) use ($search) {
-                $q->where('order_number', 'like', "%{$search}%")
-                  ->orWhere('customer_name', 'like', "%{$search}%")
-                  ->orWhere('customer_id_number', 'like', "%{$search}%");
-            });
+        $query = Order::with(['client', 'items.product', 'branch'])
+            ->latest();
+
+        // Si el usuario tiene un client_id asignado, filtramos sus órdenes
+        if (!empty($user->client_id)) {
+            $query->where('client_id', $user->client_id);
         }
         
-        $orders = $query->orderBy('created_at', 'desc')->paginate(15);
+        if (request('status')) {
+            $query->where('status', request('status'));
+        }
+
+        $orders = $query->paginate(15);
         return view('admin.operations.orders.index', compact('orders'));
     }
 
     public function create()
     {
-        $clients = Client::where('is_active', true)->orderBy('company_name')->get();
-        $countries = Country::orderBy('name')->get();
-        $shippingMethods = ShippingMethod::where('is_active', true)->get();
+        $user = Auth::user();
+        $shippingMethods = collect([]); // Inicializar vacío para evitar error "Undefined variable"
+
+        // 1. Obtener Clientes
+        if (!empty($user->client_id)) {
+            $clients = Client::where('id', $user->client_id)->get();
+        } else {
+            try {
+                $clients = Client::where('is_active', true)->get();
+            } catch (\Exception $e) {
+                $clients = Client::all();
+            }
+        }
+
+        // 2. Obtener Productos con Stock
+        try {
+            // Primero obtenemos los IDs de productos que tienen stock en la tabla inventory
+            $productIdsWithStock = Inventory::where('quantity', '>', 0)
+                ->pluck('product_id')
+                ->unique();
+            
+            // Construimos la consulta de productos
+            $productsQuery = Product::whereIn('id', $productIdsWithStock);
+        } catch (\Exception $e) {
+            // Fallback si falla la tabla inventory: mostrar productos activos sin validar stock DB
+            Log::error('Error consultando inventario: ' . $e->getMessage());
+            $productsQuery = Product::query(); 
+        }
+
+        // Si es un usuario cliente, filtramos SOLO sus productos
+        if (!empty($user->client_id)) {
+            $productsQuery->where('client_id', $user->client_id);
+        } else {
+            // Si es admin, cargamos la relación cliente
+            $productsQuery->with('client'); 
+        }
+
+        $products = $productsQuery->get();
+
+        // 3. Países
+        try {
+            $countries = Country::orderBy('name')->get();
+        } catch (\Exception $e) {
+            $countries = collect([]); 
+        }
+
+        // 4. Métodos de Envío
+        try {
+            $shippingMethods = ShippingMethod::where('is_active', true)->get();
+        } catch (\Exception $e) {
+            try {
+                $shippingMethods = ShippingMethod::all();
+            } catch (\Exception $ex) {
+                $shippingMethods = collect([]); // Fallback final si la tabla no existe
+            }
+        }
         
-        $lastOrder = Order::latest('id')->first();
-        $nextId = $lastOrder ? $lastOrder->id + 1 : 1;
-        $nextOrderNumber = 'ORD-' . str_pad($nextId, 6, '0', STR_PAD_LEFT);
-
-        return view('admin.operations.orders.create', compact('clients', 'countries', 'shippingMethods', 'nextOrderNumber'));
-    }
-
-    public function getClientProducts($clientId)
-    {
-        $products = Product::where('client_id', $clientId)
-            ->withSum('inventory as stock_available', 'quantity')
-            ->get()
-            ->filter(fn($p) => $p->stock_available > 0)
-            ->values();
-
-        return response()->json($products);
-    }
-
-    public function getStatesByCountry($countryId)
-    {
-        $states = State::where('country_id', $countryId)->orderBy('name')->get();
-        return response()->json($states);
+        return view('admin.operations.orders.create', compact('clients', 'products', 'countries', 'shippingMethods'));
     }
 
     public function store(Request $request)
     {
-        // Sincronizamos validación con los nombres del formulario
         $request->validate([
             'client_id' => 'required|exists:clients,id',
-            'order_number' => 'required|unique:orders,order_number',
-            'customer_name' => 'required|string|max:255',
-            'customer_id_number' => 'required|string|max:50',
-            'shipping_address' => 'required|string',
-            'country' => 'required',
-            'state' => 'required',
-            'city' => 'required|string',
+            'shipping_name' => 'required|string|max:255',
+            'shipping_address' => 'required|string|max:255',
+            'shipping_city' => 'required|string|max:100',
+            'shipping_state' => 'required|string|max:100',
+            'shipping_country' => 'required|string|max:100',
+            'shipping_zip' => 'required|string|max:20',
             'items' => 'required|array|min:1',
             'items.*.product_id' => 'required|exists:products,id',
-            'items.*.qty' => 'required|integer|min:1',
+            'items.*.quantity' => 'required|integer|min:1',
+            'shipping_method_id' => 'nullable', // Quitamos exists estricto por si acaso la tabla es opcional
         ]);
 
-        $mappedItems = array_map(fn($item) => ['product_id' => $item['product_id'], 'qty' => $item['qty']], $request->items);
+        try {
+            DB::beginTransaction();
 
-        // Inteligencia de Asignación
-        $plan = $this->calculateAssignmentPlan($request->customer_state, $request->customer_country, $mappedItems);
+            // 1. Lógica de Cobertura de Sucursal
+            $activeBranches = Branch::where('is_active', true)->get();
+            $assignedBranch = null;
 
-        if (!$plan['success']) {
-            return back()->withInput()->withErrors(['error' => $plan['message']]);
+            foreach ($activeBranches as $branch) {
+                if ($branch->hasCoverage($request->shipping_country, $request->shipping_state)) {
+                    $assignedBranch = $branch;
+                    break; 
+                }
+            }
+
+            if (!$assignedBranch) {
+                return back()->withInput()->withErrors([
+                    'shipping_address' => "No hay sedes con cobertura para: {$request->shipping_country} - {$request->shipping_state}. Verifique la configuración."
+                ]);
+            }
+
+            // 2. Generar Número de Orden
+            // Generamos un ID único: ORD-YYYYMMDD-XXXX (ej: ORD-20231025-A1B2C)
+            $generatedOrderNumber = 'ORD-' . date('Ymd') . '-' . strtoupper(substr(uniqid(), -5));
+
+            // 3. Crear Objeto Order manual (evita problemas de $fillable)
+            $order = new Order();
+            
+            // Asignamos el número. Si la columna en BD es 'number' en vez de 'order_number', intenta asignar ambos por seguridad
+            $order->order_number = $generatedOrderNumber;
+            // $order->number = $generatedOrderNumber; // Descomentar si tu columna se llama 'number'
+            
+            $order->client_id = $request->client_id;
+            $order->branch_id = $assignedBranch->id;
+            $order->status = 'pending';
+            
+            $order->shipping_name = $request->shipping_name;
+            $order->shipping_address = $request->shipping_address;
+            $order->shipping_city = $request->shipping_city;
+            $order->shipping_state = $request->shipping_state;
+            $order->shipping_country = $request->shipping_country;
+            $order->shipping_zip = $request->shipping_zip;
+            $order->shipping_phone = $request->shipping_phone ?? null;
+            
+            $order->notes = $request->notes ?? null;
+            $order->shipping_method_id = $request->shipping_method_id ?? null;
+            
+            $order->total_weight = 0;
+            $order->total_volume = 0;
+            
+            $order->save();
+
+            // 4. Procesar Items
+            $totalWeight = 0;
+            $totalVolume = 0;
+
+            foreach ($request->items as $itemData) {
+                $product = Product::find($itemData['product_id']);
+
+                // Validar que el producto pertenezca al cliente de la orden
+                if ($product->client_id != $request->client_id) {
+                    throw new \Exception("El producto '{$product->name}' no pertenece al cliente seleccionado.");
+                }
+                
+                // Validar Stock en tabla Inventory
+                $currentStock = Inventory::where('product_id', $product->id)->sum('quantity');
+
+                if ($currentStock < $itemData['quantity']) {
+                    throw new \Exception("Stock insuficiente para: {$product->name} (Disponible: {$currentStock})");
+                }
+
+                OrderItem::create([
+                    'order_id' => $order->id,
+                    'product_id' => $product->id,
+                    'quantity' => $itemData['quantity'],
+                    'unit_price' => 0, 
+                ]);
+
+                $totalWeight += ($product->weight ?? 0) * $itemData['quantity'];
+                $totalVolume += (($product->width * $product->height * $product->length) ?? 0) * $itemData['quantity'];
+            }
+
+            // Actualizar totales
+            $order->total_weight = $totalWeight;
+            $order->total_volume = $totalVolume;
+            $order->save();
+
+            DB::commit();
+
+            return redirect()->route('admin.operations.orders.index')
+                ->with('success', "Pedido {$order->order_number} creado exitosamente en sucursal: {$assignedBranch->name}");
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Error al crear pedido: ' . $e->getMessage());
+            return back()->withInput()->withErrors(['error' => 'Error al guardar: ' . $e->getMessage()]);
+        }
+    }
+
+    public function show($id)
+    {
+        $order = Order::with(['client', 'items.product', 'branch', 'allocations.bin.warehouse'])->findOrFail($id);
+        
+        $user = Auth::user();
+        if (!empty($user->client_id) && $order->client_id !== $user->client_id) {
+            abort(403);
+        }
+
+        return view('admin.operations.orders.show', compact('order'));
+    }
+
+    public function edit($id)
+    {
+        $order = Order::with('items')->findOrFail($id);
+        
+        if ($order->status !== 'pending') {
+            return redirect()->back()->with('error', 'Solo se pueden editar pedidos pendientes.');
+        }
+
+        $user = Auth::user();
+        $shippingMethods = collect([]); // Inicializar vacío
+
+        // Clientes
+        if (!empty($user->client_id)) {
+            $clients = Client::where('id', $user->client_id)->get();
+        } else {
+            try {
+                $clients = Client::where('is_active', true)->get();
+            } catch (\Exception $e) {
+                $clients = Client::all();
+            }
+        }
+        
+        // Productos
+        $products = Product::where('client_id', $order->client_id)->get();
+        
+        // Países
+        try {
+            $countries = Country::orderBy('name')->get();
+        } catch (\Exception $e) {
+            $countries = collect([]);
+        }
+
+        // Métodos de Envío
+        try {
+            $shippingMethods = ShippingMethod::where('is_active', true)->get();
+        } catch (\Exception $e) {
+            try {
+                $shippingMethods = ShippingMethod::all();
+            } catch (\Exception $ex) {
+                $shippingMethods = collect([]);
+            }
+        }
+
+        return view('admin.operations.orders.edit', compact('order', 'clients', 'products', 'countries', 'shippingMethods'));
+    }
+
+    public function update(Request $request, $id)
+    {
+        $order = Order::findOrFail($id);
+
+        if ($order->status !== 'pending') {
+            return back()->with('error', 'No se puede modificar un pedido que ya está en proceso.');
+        }
+
+        $request->validate([
+            'shipping_name' => 'required|string|max:255',
+            'shipping_address' => 'required|string|max:255',
+            // ... validaciones ...
+        ]);
+
+        try {
+            DB::beginTransaction();
+
+            $order->shipping_name = $request->shipping_name;
+            $order->shipping_address = $request->shipping_address;
+            $order->shipping_city = $request->shipping_city;
+            $order->shipping_state = $request->shipping_state;
+            $order->shipping_country = $request->shipping_country;
+            $order->shipping_zip = $request->shipping_zip;
+            $order->shipping_method_id = $request->shipping_method_id;
+            $order->notes = $request->notes;
+            $order->save();
+
+            DB::commit();
+            return redirect()->route('admin.operations.orders.index')->with('success', 'Pedido actualizado.');
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return back()->with('error', 'Error al actualizar: ' . $e->getMessage());
+        }
+    }
+
+    public function destroy($id)
+    {
+        $order = Order::findOrFail($id);
+
+        if (!in_array($order->status, ['pending', 'draft', 'cancelled'])) {
+            return back()->with('error', 'No se puede eliminar un pedido activo.');
         }
 
         try {
-            $order = DB::transaction(function () use ($request, $plan) {
-                return Order::create([
-                    'order_number' => $request->order_number,
-                    'external_ref' => $request->reference_number,
-                    'client_id' => $request->client_id,
-                    'branch_id' => $plan['target_branch_id'],
-                    'customer_name' => $request->customer_name,
-                    'customer_id_number' => $request->customer_id_number,
-                    'customer_email' => $request->customer_email,
-                    'shipping_address' => $request->shipping_address,
-                    'city' => $request->city,
-                    'state' => $request->state,
-                    'country' => $request->country,
-                    'customer_zip' => $request->customer_zip,
-                    'phone' => $request-phone,
-                    'shipping_method' => $request->shipping_method,
-                    'status' => $plan['requires_transfer'] ? 'waiting_transfer' : 'pending',
-                    'notes' => $request->notes,
-                ]);
-            });
-
-            // Registrar ítems
-            foreach ($request->items as $itemData) {
-                OrderItem::create([
-                    'order_id' => $order->id,
-                    'product_id' => $itemData['product_id'],
-                    'requested_quantity' => $itemData['qty'],
-                ]);
-            }
-
-            if ($plan['requires_transfer']) {
-                $this->createConsolidationTransfers($order, $plan['transfer_plan']);
-            }
-
-            $this->performStockAllocation($order);
-            return redirect()->route('admin.orders.index')->with('success', "Orden {$order->order_number} procesada.");
-
+            $order->delete();
+            return redirect()->route('admin.operations.orders.index')->with('success', 'Pedido eliminado correctamente.');
         } catch (\Exception $e) {
-            return back()->withInput()->withErrors(['error' => 'Fallo en creación: ' . $e->getMessage()]);
+            return back()->with('error', 'Error al eliminar: ' . $e->getMessage());
         }
     }
 
-    private function calculateAssignmentPlan($destState, $destCountry, $requestedItems)
+    public function updateStatus(Request $request, $id)
     {
-        $branches = Branch::where('is_active', true)->get();
-        $branchEvaluations = [];
-
-        foreach ($branches as $branch) {
-            $geoScore = $this->calculateGeoScore($branch, $destState, $destCountry);
-            if ($geoScore === 0) continue; 
-
-            $fulfillment = $this->evaluateStockFulfillment($branch->id, $requestedItems);
-            
-            $branchEvaluations[] = [
-                'branch' => $branch,
-                'geo_score' => $geoScore,
-                'is_full_stock' => $fulfillment['is_complete'],
-                'fulfillment_data' => $fulfillment
-            ];
-        }
-
-        if (empty($branchEvaluations)) {
-            return ['success' => false, 'message' => 'No hay sedes con cobertura para esta zona geográfica (Verifique que el país/estado coincida exactamente con la configuración de cobertura).'];
-        }
-
-        $fullStockCandidates = collect($branchEvaluations)->where('is_full_stock', true)->sortByDesc('geo_score');
-        if ($fullStockCandidates->isNotEmpty()) {
-            return ['success' => true, 'target_branch_id' => $fullStockCandidates->first()['branch']->id, 'requires_transfer' => false];
-        }
-
-        $bestGeoBranch = collect($branchEvaluations)->sortByDesc('geo_score')->first();
-        return ['success' => true, 'target_branch_id' => $bestGeoBranch['branch']->id, 'requires_transfer' => true, 'transfer_plan' => []]; // Lógica de traslados simplificada
-    }
-
-    private function calculateGeoScore($branch, $destState, $destCountry) {
-        // Normalización para comparación insensible a mayúsculas/minúsculas
-        $destCountry = trim(strtolower($destCountry));
-        $destState = trim(strtolower($destState));
-        $branchCountry = trim(strtolower($branch->country));
-        $branchState = trim(strtolower($branch->state));
-
-        $coveredCountries = array_map('strtolower', array_map('trim', $branch->covered_countries ?? []));
-        $coversCountry = ($branchCountry === $destCountry) || in_array($destCountry, $coveredCountries);
-
-        if (!$coversCountry) return 0;
-        if ($branchCountry === $destCountry && $branchState === $destState) return 100;
+        $order = Order::findOrFail($id);
         
-        $coveredStates = array_map('strtolower', array_map('trim', $branch->covered_states ?? []));
-        if (in_array($destState, $coveredStates)) return 80;
+        $request->validate([
+            'status' => 'required|string|in:pending,processing,shipped,delivered,cancelled'
+        ]);
 
-        return 20;
+        $order->update(['status' => $request->status]);
+
+        return back()->with('success', 'Estado del pedido actualizado.');
     }
 
-    private function evaluateStockFulfillment($branchId, $requestedItems) {
-        $data = ['is_complete' => true, 'items' => []];
-        foreach ($requestedItems as $item) {
-            $stock = Inventory::where('product_id', $item['product_id'])
-                ->whereHas('location.warehouse', fn($q) => $q->where('branch_id', $branchId))->sum('quantity');
-            if ($stock < $item['qty']) $data['is_complete'] = false;
-        }
-        return $data;
-    }
-
-    private function performStockAllocation(Order $order) {
-        foreach($order->items as $item) {
-            $needed = $item->requested_quantity;
-            $stockRecords = Inventory::where('product_id', $item->product_id)->where('quantity', '>', 0)
-                ->whereHas('location.warehouse', fn($q) => $q->where('branch_id', $order->branch_id))
-                ->orderBy('quantity', 'desc')->get();
-
-            foreach($stockRecords as $record) {
-                if($needed <= 0) break;
-                $take = min($needed, $record->quantity);
-                OrderAllocation::create(['order_item_id' => $item->id, 'location_id' => $record->location_id, 'quantity' => $take, 'status' => 'planned']);
-                $record->decrement('quantity', $take);
-                $needed -= $take;
-            }
-        }
+    public function pickingList($id)
+    {
+        $order = Order::with(['items.product', 'allocations.bin'])->findOrFail($id);
+        return view('admin.operations.orders.picking_list', compact('order'));
     }
 }

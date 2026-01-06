@@ -9,66 +9,78 @@ class Branch extends Model
 {
     use HasFactory;
 
-    /**
-     * Atributos asignables de forma masiva.
-     * Se han incluido los campos geográficos y de inteligencia de cobertura.
-     * * @var array
-     */
     protected $fillable = [
-        'name', 
-        'address', 
-        'city', 
-        'state', 
-        'country',        // País de ubicación de la sede
-        'zip',            // Código Postal
-        'code', 
-        'is_active',
-        'can_export',     // Permiso para envíos internacionales
-        'covered_countries', // Países que esta sede atiende (Array/JSON)
-        'covered_states'    // Estados/Provincias que esta sede atiende (Array/JSON)
+        'name',
+        'address',
+        'city',
+        'state',
+        'country',
+        'phone',
+        'email',
+        'manager_name',
+        'coverage_area', // JSON: {"United States": ["Florida", "Texas"], "Mexico": []}
+        'is_active'
     ];
 
-    /**
-     * Conversión de tipos de atributos.
-     * Los campos JSON se convierten automáticamente en arreglos de PHP.
-     * * @var array
-     */
     protected $casts = [
+        'coverage_area' => 'array',
         'is_active' => 'boolean',
-        'can_export' => 'boolean',
-        'covered_countries' => 'array', 
-        'covered_states' => 'array',
     ];
 
-    /**
-     * Relación: Una Sucursal tiene muchas Bodegas (Warehouses).
-     */
     public function warehouses()
     {
         return $this->hasMany(Warehouse::class);
     }
 
-    /**
-     * Relación: Una Sucursal tiene muchos Pedidos asignados.
-     */
-    public function orders()
+    public function users()
     {
-        return $this->hasMany(Order::class);
+        return $this->hasMany(User::class); // Si tienes relación usuarios-sucursal
     }
 
     /**
-     * Scope para filtrar sucursales con capacidad de exportación.
+     * Verifica si la sucursal tiene cobertura para un país y estado dados.
+     * Normaliza los textos para evitar errores por mayúsculas o espacios.
      */
-    public function scopeCanExport($query)
+    public function hasCoverage($targetCountry, $targetState = null)
     {
-        return $query->where('can_export', true);
+        // 1. Si no hay configuración, asumimos que NO hay cobertura (o cambia a true si quieres cobertura global por defecto)
+        if (empty($this->coverage_area) || !is_array($this->coverage_area)) {
+            return false;
+        }
+
+        $targetCountry = $this->normalizeString($targetCountry);
+        $targetState = $this->normalizeString($targetState);
+
+        foreach ($this->coverage_area as $country => $states) {
+            // 2. Compara el país
+            if ($this->normalizeString($country) === $targetCountry) {
+                
+                // Si el array de estados está vacío o contiene '*', cubre todo el país
+                if (empty($states) || (is_array($states) && in_array('*', $states))) {
+                    return true;
+                }
+
+                // 3. Si hay estados definidos, busca el estado específico
+                if ($targetState && is_array($states)) {
+                    // Normalizamos todos los estados configurados para comparar
+                    $normalizedStates = array_map([$this, 'normalizeString'], $states);
+                    if (in_array($targetState, $normalizedStates)) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
     }
 
     /**
-     * Scope para filtrar solo sucursales operativas.
+     * Helper para limpiar cadenas (trim + uppercase)
      */
-    public function scopeActive($query)
+    private function normalizeString($string)
     {
-        return $query->where('is_active', true);
+        if (is_null($string)) return '';
+        // Elimina acentos básicos si es necesario, pero startoupper suele bastar para inglés/español básico
+        return strtoupper(trim($string));
     }
 }
