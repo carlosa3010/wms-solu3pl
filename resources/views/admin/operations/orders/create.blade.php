@@ -7,7 +7,7 @@
 
     <div class="max-w-6xl mx-auto">
         
-        <!-- Alertas de validación -->
+        <!-- Alertas de validación y errores de sistema -->
         @if($errors->any())
             <div class="bg-red-100 border-l-4 border-red-500 text-red-700 p-4 mb-6 rounded shadow-sm">
                 <p class="font-bold text-sm">Hay errores en el formulario:</p>
@@ -53,7 +53,7 @@
                         </div>
                     </div>
 
-                    <!-- Información del Destinatario (Formulario Unificado) -->
+                    <!-- Información del Destinatario -->
                     <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
                         <div class="p-5 border-b border-slate-100 bg-slate-50">
                             <h3 class="font-bold text-slate-700 text-sm flex items-center gap-2 uppercase tracking-wider">
@@ -75,7 +75,7 @@
                             <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                                 <div>
                                     <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Teléfono de Contacto *</label>
-                                    <input type="tel" name="phone" required placeholder="+58..." class="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm outline-none focus:border-indigo-500 transition-colors">
+                                    <input type="tel" name="customer_phone" required placeholder="+58..." class="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm outline-none focus:border-indigo-500 transition-colors">
                                 </div>
                                 <div>
                                     <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Correo Electrónico (Opcional)</label>
@@ -86,7 +86,7 @@
                             <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
                                 <div>
                                     <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">País *</label>
-                                    <select name="country" id="country" required class="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm bg-white outline-none focus:border-indigo-500 transition-colors">
+                                    <select name="country" id="customer_country" required class="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm bg-white outline-none focus:border-indigo-500 transition-colors">
                                         <option value="">-- Seleccionar --</option>
                                         @foreach($countries as $country)
                                             <option value="{{ $country->name }}" data-id="{{ $country->id }}">{{ $country->name }}</option>
@@ -95,7 +95,7 @@
                                 </div>
                                 <div>
                                     <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Estado / Provincia *</label>
-                                    <select name="state" id="state" required disabled class="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm bg-white disabled:bg-slate-100 disabled:cursor-not-allowed outline-none focus:border-indigo-500 transition-colors">
+                                    <select name="state" id="customer_state" required disabled class="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm bg-white disabled:bg-slate-100 disabled:cursor-not-allowed outline-none focus:border-indigo-500 transition-colors">
                                         <option value="">Primero seleccione país</option>
                                     </select>
                                 </div>
@@ -112,7 +112,7 @@
                                 </div>
                                 <div>
                                     <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Código Postal</label>
-                                    <input type="text" name="customer_zip" placeholder="Opcional" class="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm outline-none focus:border-indigo-500 transition-colors">
+                                    <input type="text" name="customer_zip" required placeholder="C.P." class="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm outline-none focus:border-indigo-500 transition-colors">
                                 </div>
                             </div>
                         </div>
@@ -137,7 +137,7 @@
                                     </tr>
                                 </thead>
                                 <tbody class="divide-y divide-slate-100" id="itemsContainer">
-                                    <!-- Aquí se inyectan las filas -->
+                                    <!-- Aquí se inyectan las filas dinámicamente -->
                                 </tbody>
                             </table>
                         </div>
@@ -202,7 +202,7 @@
         </form>
     </div>
 
-    <!-- Plantilla de Fila -->
+    <!-- Plantilla de Fila para Tabla de Productos -->
     <template id="productRowTemplate">
         <tr class="group hover:bg-slate-50 transition">
             <td class="px-6 py-4 text-center text-slate-400 font-mono text-xs row-index">1</td>
@@ -239,7 +239,7 @@
         const stateSelect = document.getElementById('customer_state');
         const clientSelect = document.getElementById('client_id');
 
-        // 1. Manejo dinámico de Estados
+        // 1. Manejo dinámico de Estados (Usando ruta absoluta)
         countrySelect.addEventListener('change', function() {
             const selectedOption = this.options[this.selectedIndex];
             const countryId = selectedOption.getAttribute('data-id');
@@ -248,12 +248,10 @@
             stateSelect.disabled = true;
 
             if (countryId) {
-                // Usamos la URL absoluta generada por Blade para evitar errores 404 por prefijos
                 const url = `{{ url('/admin/inventory/get-states') }}/${countryId}`;
-                
                 fetch(url)
                     .then(response => {
-                        if (!response.ok) throw new Error('Network response was not ok');
+                        if (!response.ok) throw new Error('Error al obtener estados');
                         return response.json();
                     })
                     .then(data => {
@@ -264,7 +262,7 @@
                         stateSelect.disabled = false;
                     })
                     .catch(error => {
-                        console.error('Error fetching states:', error);
+                        console.error('AJAX Error:', error);
                         stateSelect.innerHTML = '<option value="">Error al cargar estados</option>';
                     });
             } else {
@@ -272,7 +270,7 @@
             }
         });
 
-        // 2. Manejo dinámico de Productos por Cliente
+        // 2. Manejo dinámico de Productos por Cliente (Usando ruta absoluta)
         clientSelect.addEventListener('change', function() {
             const clientId = this.value;
             const container = document.getElementById('itemsContainer');
@@ -289,21 +287,20 @@
 
             if (clientId) {
                 const url = `{{ url('/admin/orders/get-client-products') }}/${clientId}`;
-                
                 fetch(url)
                     .then(response => {
-                        if (!response.ok) throw new Error('Network response was not ok');
+                        if (!response.ok) throw new Error('Error al obtener productos');
                         return response.json();
                     })
                     .then(data => {
                         clientProducts = data;
-                        addBtn.disabled = false;
+                        addBtn.disabled = false; // Habilitamos el botón
                         if(data.length === 0) {
                              alert("Este cliente no tiene productos con stock disponible.");
                         }
                     })
                     .catch(error => {
-                        console.error('Error fetching products:', error);
+                        console.error('AJAX Error:', error);
                         alert("Error al cargar los productos del cliente.");
                         addBtn.disabled = true;
                     });
@@ -327,13 +324,15 @@
         const clone = template.content.cloneNode(true);
         const row = clone.querySelector('tr');
         
+        // Reemplazar index en nombres de campos
         row.innerHTML = row.innerHTML.replace(/INDEX/g, rowIndex);
         
+        // Cargar SKUs del cliente actual
         const select = row.querySelector('.sku-selector');
         clientProducts.forEach(p => {
             const opt = document.createElement('option');
             opt.value = p.id;
-            opt.textContent = `${p.sku} | ${p.name} (Stock: ${p.stock_available})`;
+            opt.textContent = `${p.sku} | ${p.name}`;
             select.appendChild(opt);
         });
 
