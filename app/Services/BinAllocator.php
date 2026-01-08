@@ -3,22 +3,24 @@
 namespace App\Services;
 
 use App\Models\ASN;
-use App\Models\Location;
 use App\Models\ASNAllocation;
+use App\Models\Location;
 use App\Models\Inventory;
+use App\Models\Order;
+use App\Models\OrderAllocation;
+use Illuminate\Support\Facades\Log;
 
 class BinAllocator
 {
     /**
-     * Ejecuta la lógica de asignación automática para una ASN completa.
-     * Algoritmo: Busca bines vacíos compatibles y reserva espacio.
+     * Lógica para ENTRADAS (ASN):
+     * Busca bines vacíos compatibles para guardar mercancía.
      */
     public function allocateASN(ASN $asn)
     {
-        // 1. Cargar items y productos para leer dimensiones
         $asn->load('items.product');
 
-        // 2. Obtener ubicaciones vacías disponibles con tipo de bin
+        // Buscar ubicaciones vacías con tipo de bin definido
         $emptyLocations = Location::whereDoesntHave('stock', function($q) {
                 $q->where('quantity', '>', 0);
             })
@@ -29,46 +31,32 @@ class BinAllocator
             ->orderBy('shelf')
             ->get();
 
-        // 3. Iterar sobre cada producto que esperamos recibir
         foreach ($asn->items as $item) {
             $product = $item->product;
             $qtyToAllocate = $item->expected_quantity;
 
-            // CORRECCIÓN: Usamos '?:' en lugar de '??'. 
-            // Si el valor es 0 o null, usa el default (Medidas de caja de zapatos aprox)
+            // Dimensiones seguras
             $l = (float)$product->length_cm ?: 30; 
             $w = (float)$product->width_cm ?: 20;
             $h = (float)$product->height_cm ?: 12;
             
-            // Calculamos volumen en cm3
             $prodVol = $l * $w * $h;
-
-            // SEGURIDAD: Si por alguna razón sigue siendo 0, forzamos un valor mínimo (10x10x10)
-            if ($prodVol <= 0) {
-                $prodVol = 1000; 
-            }
+            if ($prodVol <= 0) $prodVol = 1000; 
             
-            // 4. Buscar bines para este producto
             foreach ($emptyLocations as $key => $loc) {
-                if ($qtyToAllocate <= 0) break; // Ya terminamos con este item
+                if ($qtyToAllocate <= 0) break;
 
                 $binType = $loc->binType;
-                
-                // Si el tipo de bin no tiene dimensiones válidas, saltamos
                 if (!$binType || $binType->length <= 0) continue;
                 
                 $binVol = $binType->length * $binType->width * $binType->height;
                 
-                // Capacidad teórica (85% eficiencia)
-                // Aquí es donde ocurría el error si $prodVol era 0
+                // Capacidad al 85%
                 $maxUnitsInBin = floor(($binVol / $prodVol) * 0.85);
-                
                 if ($maxUnitsInBin < 1) continue;
 
-                // Definir cantidad a guardar
                 $qtyForThisBin = min($qtyToAllocate, $maxUnitsInBin);
 
-                // 5. Guardar la asignación
                 ASNAllocation::create([
                     'asn_item_id' => $item->id,
                     'location_id' => $loc->id,
@@ -80,5 +68,123 @@ class BinAllocator
                 $emptyLocations->forget($key);
             }
         }
+    }
+
+    /**
+     * Lógica para SALIDAS (Picking / Pedidos):
+     * Busca inventario existente (FIFO) para reservar stock.
+     */
+    public function allocateOrder($order)
+    {
+        $allocatedAny = false;
+
+        foreach ($order->items as $item) {
+            // Si ya está completo, saltar
+            if ($item->allocated_quantity >= $item->requested_quantity) {
+                continue;
+            }
+
+            $qtyNeeded = $item->requested_quantity - $item->allocated_quantity;
+            
+            // FIFO: Buscar inventario más antiguo primero
+            // Asumimos que Inventory tiene relación con Product y Location
+            $inventoryBatches = Inventory::where('product_id', $item->product_id)
+                ->where('quantity', '>', 0)
+                ->orderBy('created_at', 'asc') // FIFO
+                ->get();
+
+            if ($inventoryBatches->isEmpty()) {
+                continue;
+            }
+
+            foreach ($inventoryBatches as $batch) {
+                if ($qtyNeeded <= 0) break;
+
+                $qtyToTake = min($qtyNeeded, $batch->quantity);
+
+                // Crear reserva (Allocation)
+                OrderAllocation::create([
+                    'order_item_id' => $item->id,
+                    'location_id'   => $batch->location_id,
+                    'quantity'      => $qtyToTake
+                ]);
+
+                // Descontar del inventario físico disponible
+                $batch->quantity -= $qtyToTake;
+                $batch->save();
+
+                // Actualizar item
+                $item->allocated_quantity += $qtyToTake;
+                $qtyNeeded -= $qtyToTake;
+                $allocatedAny = true;
+            }
+
+            $item->save();
+        }
+
+        $this->updateOrderStatus($order);
+
+        return $allocatedAny;
+    }
+
+    private function updateOrderStatus($order)
+    {
+        $order->refresh();
+        $totalRequested = $order->items->sum('requested_quantity');
+        $totalAllocated = $order->items->sum('allocated_quantity');
+
+        if ($totalAllocated >= $totalRequested) {
+            $order->status = 'allocated'; // Listo para picking
+        } elseif ($totalAllocated > 0) {
+            $order->status = 'allocated'; // Parcialmente asignado (o usar 'partial')
+        }
+        
+        $order->save();
+    }
+    /**
+     * Lógica para ANULAR (Release Stock):
+     * Devuelve el stock reservado al inventario disponible y pone en 0 la orden.
+     */
+    public function deallocateOrder(Order $order)
+    {
+        // 1. Cargar relaciones necesarias
+        $order->load('items.allocations');
+
+        foreach ($order->items as $item) {
+            // Si no tiene nada asignado, saltamos
+            if ($item->allocated_quantity <= 0) continue;
+
+            foreach ($item->allocations as $allocation) {
+                // 2. Buscar si existe inventario en esa ubicación para ese producto
+                $inventory = Inventory::where('product_id', $item->product_id)
+                    ->where('location_id', $allocation->location_id)
+                    ->first();
+
+                if ($inventory) {
+                    // Si existe, sumamos la cantidad
+                    $inventory->quantity += $allocation->quantity;
+                    $inventory->save();
+                } else {
+                    // Si el registro de inventario se borró (raro, pero posible), lo recreamos
+                    Inventory::create([
+                        'product_id' => $item->product_id,
+                        'location_id' => $allocation->location_id,
+                        'quantity' => $allocation->quantity,
+                        'batch_number' => 'RETURN-' . date('Ymd'), // Opcional
+                    ]);
+                }
+
+                // 3. Eliminar el registro de asignación
+                $allocation->delete();
+            }
+
+            // 4. Resetear contador del item
+            $item->allocated_quantity = 0;
+            $item->save();
+        }
+
+        // 5. Marcar orden como cancelada
+        $order->status = 'cancelled';
+        $order->save();
     }
 }

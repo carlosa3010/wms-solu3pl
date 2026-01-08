@@ -18,13 +18,17 @@ class Branch extends Model
         'phone',
         'email',
         'manager_name',
-        'coverage_area', // JSON: {"United States": ["Florida", "Texas"], "Mexico": []}
-        'is_active'
+        'covered_countries', // Corregido: nombre real en BD
+        'covered_states',    // Corregido: nombre real en BD
+        'is_active',
+        'can_export'
     ];
 
     protected $casts = [
-        'coverage_area' => 'array',
-        'is_active' => 'boolean',
+        'covered_countries' => 'array', // Importante: Castear a array
+        'covered_states'    => 'array', // Importante: Castear a array
+        'is_active'         => 'boolean',
+        'can_export'        => 'boolean',
     ];
 
     public function warehouses()
@@ -34,53 +38,48 @@ class Branch extends Model
 
     public function users()
     {
-        return $this->hasMany(User::class); // Si tienes relación usuarios-sucursal
+        return $this->hasMany(User::class);
     }
 
     /**
-     * Verifica si la sucursal tiene cobertura para un país y estado dados.
-     * Normaliza los textos para evitar errores por mayúsculas o espacios.
+     * Verifica si la sucursal tiene cobertura.
+     * Basado en las listas independientes de paises y estados.
      */
     public function hasCoverage($targetCountry, $targetState = null)
     {
-        // 1. Si no hay configuración, asumimos que NO hay cobertura (o cambia a true si quieres cobertura global por defecto)
-        if (empty($this->coverage_area) || !is_array($this->coverage_area)) {
+        // 1. Validar Paises (Array plano en BD)
+        $countries = $this->covered_countries ?? [];
+        if (empty($countries)) return false;
+
+        $targetCountry = $this->normalizeString($targetCountry);
+        
+        // Normalizamos la lista de países de la BD
+        $normalizedCountries = array_map([$this, 'normalizeString'], $countries);
+
+        if (!in_array($targetCountry, $normalizedCountries)) {
             return false;
         }
 
-        $targetCountry = $this->normalizeString($targetCountry);
-        $targetState = $this->normalizeString($targetState);
-
-        foreach ($this->coverage_area as $country => $states) {
-            // 2. Compara el país
-            if ($this->normalizeString($country) === $targetCountry) {
-                
-                // Si el array de estados está vacío o contiene '*', cubre todo el país
-                if (empty($states) || (is_array($states) && in_array('*', $states))) {
-                    return true;
-                }
-
-                // 3. Si hay estados definidos, busca el estado específico
-                if ($targetState && is_array($states)) {
-                    // Normalizamos todos los estados configurados para comparar
-                    $normalizedStates = array_map([$this, 'normalizeString'], $states);
-                    if (in_array($targetState, $normalizedStates)) {
-                        return true;
-                    }
-                }
-            }
+        // 2. Validar Estados (si aplica)
+        // Si no hay estados definidos, asumimos cobertura nacional en ese país
+        $states = $this->covered_states ?? [];
+        if (empty($states)) {
+            return true;
         }
 
-        return false;
+        if ($targetState) {
+            $targetState = $this->normalizeString($targetState);
+            $normalizedStates = array_map([$this, 'normalizeString'], $states);
+            
+            return in_array($targetState, $normalizedStates);
+        }
+
+        return true;
     }
 
-    /**
-     * Helper para limpiar cadenas (trim + uppercase)
-     */
     private function normalizeString($string)
     {
         if (is_null($string)) return '';
-        // Elimina acentos básicos si es necesario, pero startoupper suele bastar para inglés/español básico
         return strtoupper(trim($string));
     }
 }

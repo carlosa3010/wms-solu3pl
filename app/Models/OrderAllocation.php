@@ -20,4 +20,13 @@ class OrderAllocation extends Model
     {
         return $this->belongsTo(Location::class);
     }
+
+    /**
+     * CORRECCIÓN: Alias 'bin' para mantener compatibilidad 
+     * con el controlador que llama a 'allocations.bin'
+     */
+    public function bin()
+    {
+        return $this->belongsTo(Location::class, 'location_id');
+    }
 }

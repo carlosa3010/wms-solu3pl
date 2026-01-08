@@ -5,7 +5,6 @@
 
 @section('content')
 
-    <!-- Filtros y Acciones Superiores -->
     <div class="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
         <form action="{{ route('admin.orders.index') }}" method="GET" class="flex-1 max-w-lg w-full">
             <div class="relative group">
@@ -25,7 +24,6 @@
         </div>
     </div>
 
-    <!-- Tabla Principal de Pedidos -->
     <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
         <div class="overflow-x-auto">
             <table class="w-full text-left text-sm whitespace-nowrap">
@@ -42,7 +40,6 @@
                 <tbody class="divide-y divide-slate-100">
                     @forelse($orders as $order)
                         <tr class="hover:bg-slate-50/50 transition group">
-                            <!-- Identificación del Pedido -->
                             <td class="px-6 py-4">
                                 <span class="font-bold text-slate-700 block text-sm group-hover:text-custom-primary transition">{{ $order->order_number }}</span>
                                 <span class="text-[10px] text-slate-400 font-mono">
@@ -50,7 +47,6 @@
                                 </span>
                             </td>
 
-                            <!-- Cliente (Propietario de la mercancía) -->
                             <td class="px-6 py-4">
                                 <div class="flex items-center gap-2">
                                     <div class="w-7 h-7 rounded-full bg-slate-100 flex items-center justify-center text-slate-400 text-[10px]">
@@ -60,7 +56,6 @@
                                 </div>
                             </td>
 
-                            <!-- Inteligencia de Asignación Visual -->
                             <td class="px-6 py-4">
                                 <div class="flex items-center gap-3">
                                     <div class="flex flex-col">
@@ -72,7 +67,6 @@
                                     </div>
                                     <i class="fa-solid fa-arrow-right text-[10px] text-slate-300"></i>
                                     
-                                    <!-- Badge de Sede que atiende el pedido -->
                                     <div class="flex flex-col items-center">
                                         @if($order->branch)
                                             <div class="bg-blue-50 px-2 py-1 rounded border border-blue-100 flex items-center gap-1.5 shadow-sm">
@@ -91,7 +85,6 @@
                                 </div>
                             </td>
 
-                            <!-- Fecha -->
                             <td class="px-6 py-4">
                                 <span class="text-xs text-slate-500 flex items-center gap-2">
                                     <i class="fa-regular fa-calendar text-slate-300"></i>
@@ -102,44 +95,51 @@
                                 </span>
                             </td>
 
-                            <!-- Estado con Badge Dinámico -->
                             <td class="px-6 py-4 text-center">
-                                @php
-                                    $statusConfig = [
-                                        'pending'   => ['bg' => 'bg-yellow-50', 'text' => 'text-yellow-700', 'border' => 'border-yellow-200', 'icon' => 'fa-clock'],
-                                        'allocated' => ['bg' => 'bg-blue-50',   'text' => 'text-blue-700',   'border' => 'border-blue-200',   'icon' => 'fa-box-circle-check'],
-                                        'picking'   => ['bg' => 'bg-indigo-50', 'text' => 'text-indigo-700', 'border' => 'border-indigo-200', 'icon' => 'fa-dolly'],
-                                        'packing'   => ['bg' => 'bg-purple-50', 'text' => 'text-purple-700', 'border' => 'border-purple-200', 'icon' => 'fa-box-open'],
-                                        'shipped'   => ['bg' => 'bg-green-50',  'text' => 'text-green-700',  'border' => 'border-green-200',  'icon' => 'fa-truck-fast'],
-                                        'cancelled' => ['bg' => 'bg-red-50',    'text' => 'text-red-700',    'border' => 'border-red-200',    'icon' => 'fa-ban'],
-                                    ];
-                                    $s = $statusConfig[$order->status] ?? ['bg' => 'bg-slate-50', 'text' => 'text-slate-600', 'border' => 'border-slate-200', 'icon' => 'fa-circle-question'];
-                                @endphp
-                                <span class="{{ $s['bg'] }} {{ $s['text'] }} {{ $s['border'] }} px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider border flex items-center justify-center gap-1.5 w-fit mx-auto shadow-sm">
-                                    <i class="fa-solid {{ $s['icon'] }}"></i> {{ $order->status_label }}
-                                </span>
+                                @if($order->status == 'pending')
+                                    <span class="px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full bg-yellow-100 text-yellow-800 border border-yellow-200">
+                                        <i class="fa-regular fa-clock mr-1 mt-0.5"></i> Pendiente
+                                    </span>
+                                @elseif($order->status == 'allocated')
+                                    <span class="px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full bg-indigo-100 text-indigo-800 border border-indigo-200">
+                                        <i class="fa-solid fa-list-check mr-1 mt-0.5"></i> Listo para Picking
+                                    </span>
+                                @elseif($order->status == 'shipped')
+                                    <span class="px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800 border border-green-200">
+                                        <i class="fa-solid fa-truck-fast mr-1 mt-0.5"></i> Despachado
+                                    </span>
+                                @elseif($order->status == 'cancelled')
+                                    <span class="px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full bg-red-100 text-red-800 border border-red-200">
+                                        <i class="fa-solid fa-ban mr-1 mt-0.5"></i> Anulado
+                                    </span>
+                                @else
+                                    <span class="px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full bg-gray-100 text-gray-800 border border-gray-200">
+                                        {{ ucfirst($order->status) }}
+                                    </span>
+                                @endif
                             </td>
 
-                            <!-- Acciones -->
                             <td class="px-6 py-4 text-right">
                                 <div class="flex justify-end gap-1">
-                                    <!-- Ver Detalle / Picking Plan -->
                                     <a href="{{ route('admin.orders.show', $order->id) }}" 
                                        class="text-slate-400 hover:text-custom-primary transition p-2 hover:bg-blue-50 rounded-lg" 
                                        title="Ver Detalle y Plan de Picking">
                                         <i class="fa-solid fa-eye"></i>
                                     </a>
 
-                                    <!-- Eliminar (Solo si está en espera) -->
-                                    @if($order->status === 'pending')
+                                    @if(in_array($order->status, ['draft', 'pending', 'cancelled']))
                                         <form action="{{ route('admin.orders.destroy', $order->id) }}" method="POST" 
                                               onsubmit="return confirm('¿Está seguro de eliminar el pedido {{ $order->order_number }}? Esta acción no se puede deshacer.');" 
                                               class="inline">
                                             @csrf @method('DELETE')
-                                            <button type="submit" class="text-slate-400 hover:text-red-500 transition p-2 hover:bg-red-50 rounded-lg" title="Anular Pedido">
+                                            <button type="submit" class="text-slate-400 hover:text-red-500 transition p-2 hover:bg-red-50 rounded-lg" title="Eliminar Pedido">
                                                 <i class="fa-solid fa-trash-can"></i>
                                             </button>
                                         </form>
+                                    @else
+                                        <button disabled class="text-slate-200 cursor-not-allowed p-2" title="No se puede eliminar una orden en proceso">
+                                            <i class="fa-solid fa-trash-can"></i>
+                                        </button>
                                     @endif
                                 </div>
                             </td>
@@ -164,7 +164,6 @@
             </table>
         </div>
 
-        <!-- Paginación -->
         @if($orders->hasPages())
             <div class="p-4 border-t border-slate-100 bg-slate-50/30">
                 {{ $orders->appends(request()->query())->links() }}

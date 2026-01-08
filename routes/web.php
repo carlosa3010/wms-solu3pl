@@ -24,6 +24,7 @@ use App\Http\Controllers\PaymentMethodController;
 use App\Http\Controllers\ShippingMethodController;
 use App\Http\Controllers\Client\ClientPortalController;
 use App\Http\Controllers\Auth\PasswordController;
+use App\Http\Controllers\PickingController;
 
 /*
 |--------------------------------------------------------------------------
@@ -159,12 +160,20 @@ Route::middleware(['auth'])->group(function () {
             Route::post('/', [OrderController::class, 'store'])->name('orders.store');
             Route::get('/{id}', [OrderController::class, 'show'])->name('orders.show');
             Route::delete('/{id}', [OrderController::class, 'destroy'])->name('orders.destroy');
-            Route::post('/{id}/allocate', [OrderController::class, 'executeAllocation'])->name('orders.allocate');
             Route::get('/{id}/picking-list', [OrderController::class, 'printPickingList'])->name('orders.picking');
             Route::post('/{id}/fulfill', [OrderController::class, 'fulfill'])->name('orders.fulfill');
             
             // RUTA AÑADIDA: Obtener productos por cliente para AJAX
             Route::get('/get-client-products/{clientId}', [OrderController::class, 'getClientProducts'])->name('get_client_products');
+            Route::post('/{id}/cancel', [OrderController::class, 'cancel'])->name('orders.cancel'); 
+        });
+
+        // NUEVO MÓDULO DE PICKING
+        // CORRECCIÓN: Se usa name('picking.') para evitar 'admin.admin.picking'
+        Route::prefix('operations/picking')->name('picking.')->group(function () {
+            Route::get('/', [PickingController::class, 'index'])->name('index');
+            Route::post('/allocate/{id}', [PickingController::class, 'allocateSingle'])->name('allocate_single');
+            Route::post('/wave', [PickingController::class, 'createWave'])->name('wave');
         });
 
         Route::prefix('shipping')->group(function () {

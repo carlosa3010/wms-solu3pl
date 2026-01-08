@@ -166,7 +166,7 @@
             </div>
 
             <!-- SECCIÓN: OPERACIONES -->
-            <div x-data="{ open: {{ request()->routeIs('admin.receptions.*') || request()->routeIs('admin.orders.*') || request()->routeIs('admin.shipping.*') || request()->routeIs('admin.transfers.*') || request()->routeIs('admin.rma.*') ? 'true' : 'false' }} }" class="mb-1">
+            <div x-data="{ open: {{ request()->routeIs('admin.receptions.*') || request()->routeIs('admin.orders.*') || request()->routeIs('admin.picking.*') || request()->routeIs('admin.shipping.*') || request()->routeIs('admin.transfers.*') || request()->routeIs('admin.rma.*') ? 'true' : 'false' }} }" class="mb-1">
                 <button @click="open = !open" class="w-full flex justify-between items-center px-3 py-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest hover:text-white transition-colors focus:outline-none">
                     <span>Operaciones</span>
                     <i class="fa-solid fa-chevron-down text-[10px] transition-transform duration-200" :class="open ? '' : '-rotate-90'"></i>
@@ -179,6 +179,10 @@
                     <a href="{{ route('admin.orders.index') }}" class="flex items-center gap-3 px-3 py-2 rounded-lg transition-all {{ request()->routeIs('admin.orders.*') ? 'bg-custom-primary text-white' : 'text-slate-300 hover:bg-white/10 hover:text-white' }}">
                         <i class="fa-solid fa-cart-shopping w-5 text-center"></i>
                         <span class="text-sm font-medium">Pedidos</span>
+                    </a>
+                    <a href="{{ route('admin.picking.index') }}" class="flex items-center gap-3 px-3 py-2 rounded-lg transition-all {{ request()->routeIs('admin.picking.*') ? 'bg-custom-primary text-white' : 'text-slate-300 hover:bg-white/10 hover:text-white' }}">
+                        <i class="fa-solid fa-list-check w-5 text-center"></i>
+                        <span class="text-sm font-medium">Picking / Olas</span>
                     </a>
                     <a href="{{ route('admin.shipping.index') }}" class="flex items-center gap-3 px-3 py-2 rounded-lg transition-all {{ request()->routeIs('admin.shipping.*') ? 'bg-custom-primary text-white' : 'text-slate-300 hover:bg-white/10 hover:text-white' }}">
                         <i class="fa-solid fa-truck-fast w-5 text-center"></i>
