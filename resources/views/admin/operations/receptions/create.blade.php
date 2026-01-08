@@ -10,7 +10,6 @@
         <form action="{{ route('admin.receptions.store') }}" method="POST" id="asnForm">
             @csrf
             
-            <!-- TARJETA CABECERA -->
             <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden mb-6">
                 <div class="p-6 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
                     <h3 class="font-bold text-slate-700 text-lg flex items-center gap-2">
@@ -22,15 +21,13 @@
                 </div>
                 
                 <div class="p-6 grid grid-cols-1 md:grid-cols-3 gap-6">
-                    <!-- Número ASN -->
                     <div>
-                        <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">ASN Number <span class="text-red-50">*</span></label>
+                        <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">ASN Number <span class="text-red-500">*</span></label>
                         <input type="text" name="asn_number" value="{{ $nextId ?? '' }}" required class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 ring-custom-primary outline-none font-bold text-slate-700">
                     </div>
 
-                    <!-- Cliente -->
                     <div>
-                        <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Cliente (Dueño) <span class="text-red-50">*</span></label>
+                        <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Cliente (Dueño) <span class="text-red-500">*</span></label>
                         <select name="client_id" id="client_id" required onchange="confirmClientChange()" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 ring-custom-primary outline-none bg-white font-bold text-slate-700">
                             <option value="">-- Seleccionar Cliente --</option>
                             @foreach($clients as $client)
@@ -39,25 +36,27 @@
                         </select>
                     </div>
 
-                    <!-- Fecha Estimada -->
                     <div>
-                        <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Fecha Llegada <span class="text-red-50">*</span></label>
+                        <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Fecha Llegada <span class="text-red-500">*</span></label>
                         <input type="date" name="expected_arrival_date" value="{{ date('Y-m-d') }}" required class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 ring-custom-primary outline-none">
                     </div>
 
-                    <!-- Transportista -->
                     <div>
                         <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Transportista</label>
                         <input type="text" name="carrier_name" placeholder="Ej: DHL, Propio..." class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 ring-custom-primary outline-none">
                     </div>
 
-                    <!-- Tracking -->
+                    <div>
+                        <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Total Cajas / Bultos <span class="text-red-500">*</span></label>
+                        <input type="number" name="total_packages" min="1" value="1" required class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 ring-custom-primary outline-none font-bold text-slate-700" placeholder="Cant. bultos físicos">
+                        <p class="text-[9px] text-slate-400 mt-1">Dato clave para facturación de INBOUND.</p>
+                    </div>
+
                     <div>
                         <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Guía / Tracking</label>
                         <input type="text" name="tracking_number" placeholder="Opcional" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 ring-custom-primary outline-none">
                     </div>
 
-                    <!-- Referencia Doc -->
                     <div>
                         <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Ref. Documento</label>
                         <input type="text" name="document_ref" placeholder="Factura #123" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 ring-custom-primary outline-none">
@@ -65,7 +64,6 @@
                 </div>
             </div>
 
-            <!-- TARJETA DETALLE (Productos) -->
             <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden mb-8">
                 <div class="p-6 border-b border-slate-100 flex justify-between items-center">
                     <h3 class="font-bold text-slate-700 text-lg">Contenido de la Recepción</h3>
@@ -85,8 +83,7 @@
                             </tr>
                         </thead>
                         <tbody class="divide-y divide-slate-100" id="itemsContainer">
-                            <!-- Filas dinámicas -->
-                        </tbody>
+                            </tbody>
                     </table>
                 </div>
                 
@@ -97,130 +94,104 @@
                 </div>
             </div>
 
-            <!-- Notas -->
             <div class="mb-8">
-                <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Observaciones de Recepción</label>
-                <textarea name="notes" rows="3" class="w-full px-4 py-3 border border-slate-300 rounded-xl text-sm focus:ring-2 ring-custom-primary outline-none" placeholder="Instrucciones para el equipo de bodega..."></textarea>
+                <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Notas de Recepción</label>
+                <textarea name="notes" rows="3" class="w-full px-4 py-3 border border-slate-300 rounded-xl text-sm focus:ring-2 ring-custom-primary outline-none" placeholder="Instrucciones especiales para el equipo de bodega..."></textarea>
             </div>
 
-            <!-- Botones Acción -->
-            <div class="flex justify-end gap-4 border-t border-slate-200 pt-6">
-                <a href="{{ route('admin.receptions.index') }}" class="px-6 py-3 rounded-xl border border-slate-300 text-slate-600 font-bold text-sm hover:bg-slate-50 transition">Cancelar</a>
-                <button type="submit" class="bg-custom-primary text-white px-8 py-3 rounded-xl font-bold text-sm hover:shadow-lg hover:brightness-95 transition">
-                    <i class="fa-solid fa-save mr-2"></i> Guardar ASN
+            <div class="flex items-center justify-end gap-4">
+                <a href="{{ route('admin.receptions.index') }}" class="text-slate-500 hover:text-slate-700 font-bold text-sm">Cancelar</a>
+                <button type="submit" class="bg-custom-primary text-white px-8 py-3 rounded-xl font-bold shadow-lg shadow-blue-500/30 hover:brightness-95 transition">
+                    Guardar ASN
                 </button>
             </div>
-
         </form>
     </div>
 
-    <!-- Template para filas dinámicas -->
-    <template id="productRowTemplate">
-        <tr class="group hover:bg-slate-50 transition">
-            <td class="px-6 py-3 text-center text-slate-400 font-mono text-xs row-index">1</td>
-            <td class="px-6 py-3">
-                <select name="items[INDEX][product_id]" required class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white outline-none focus:ring-2 ring-custom-primary">
-                    <option value="">-- Buscar SKU --</option>
-                </select>
-            </td>
-            <td class="px-6 py-3">
-                <input type="number" name="items[INDEX][qty]" min="1" required class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm text-center font-bold outline-none focus:ring-2 ring-custom-primary">
-            </td>
-            <td class="px-6 py-3 text-center">
-                <button type="button" onclick="removeRow(this)" class="text-slate-300 hover:text-red-500 transition">
-                    <i class="fa-solid fa-trash-can"></i>
-                </button>
-            </td>
-        </tr>
-    </template>
+    <script>
+        let productIndex = 0;
+        let productsList = [];
 
-@endsection
-
-@section('scripts')
-<script>
-    // Recuperamos productos asegurando que incluimos client_id para filtrar
-    const allProducts = {!! json_encode(\App\Models\Product::select('id', 'name', 'sku', 'client_id')->get()) !!};
-    let rowCount = 0;
-    let lastClientId = '';
-
-    /**
-     * Valida el cambio de cliente para no mezclar productos
-     */
-    function confirmClientChange() {
-        const container = document.getElementById('itemsContainer');
-        const currentClientId = document.getElementById('client_id').value;
-
-        if (container.children.length > 0) {
-            if (confirm("Al cambiar de cliente se eliminarán los productos agregados a la lista actual. ¿Desea continuar?")) {
+        function confirmClientChange() {
+            const container = document.getElementById('itemsContainer');
+            if(container.children.length > 0) {
+                if(!confirm('Si cambia de cliente, se vaciará la lista de productos actual. ¿Continuar?')) {
+                    // Revertir cambio si es necesario (complejo sin guardar estado previo)
+                    return; 
+                }
                 container.innerHTML = '';
-                document.getElementById('emptyState').style.display = 'block';
-                rowCount = 0;
-                lastClientId = currentClientId;
-            } else {
-                // Revertir selección
-                document.getElementById('client_id').value = lastClientId;
+                checkEmptyState();
             }
-        } else {
-            lastClientId = currentClientId;
-        }
-    }
-
-    /**
-     * Agrega una fila filtrando por el cliente seleccionado
-     */
-    function addProductRow() {
-        const clientId = document.getElementById('client_id').value;
-        
-        if (!clientId) {
-            alert("Por favor, seleccione un cliente (dueño) antes de agregar productos.");
-            return;
+            loadClientProducts();
         }
 
-        rowCount++;
-        const container = document.getElementById('itemsContainer');
-        const emptyState = document.getElementById('emptyState');
-        const template = document.getElementById('productRowTemplate');
-        
-        emptyState.style.display = 'none';
+        function loadClientProducts() {
+            const clientId = document.getElementById('client_id').value;
+            if(!clientId) return;
 
-        const clone = template.content.cloneNode(true);
-        const row = clone.querySelector('tr');
-        
-        // Configurar índices
-        row.querySelector('.row-index').innerText = rowCount;
-        row.innerHTML = row.innerHTML.replace(/INDEX/g, rowCount);
-
-        const select = row.querySelector('select');
-        
-        // Filtrar productos que pertenecen al cliente
-        const filtered = allProducts.filter(p => p.client_id == clientId);
-
-        if (filtered.length === 0) {
-            alert("Este cliente no tiene productos registrados en el catálogo maestro.");
-            return;
+            // Usamos la ruta AJAX que ya creamos para Órdenes
+            fetch(`{{ url('admin/orders/get-client-products') }}/${clientId}`)
+                .then(response => response.json())
+                .then(data => {
+                    productsList = data;
+                    // Si ya había filas, limpiarlas o validar
+                })
+                .catch(error => console.error('Error:', error));
         }
 
-        filtered.forEach(p => {
-            const opt = document.createElement('option');
-            opt.value = p.id;
-            opt.text = `${p.sku} | ${p.name}`;
-            select.appendChild(opt);
-        });
+        function addProductRow() {
+            const clientId = document.getElementById('client_id').value;
+            if(!clientId) {
+                alert('Por favor seleccione un cliente primero.');
+                return;
+            }
 
-        container.appendChild(row);
-    }
+            const container = document.getElementById('itemsContainer');
+            const rowId = `row-${productIndex}`;
+            
+            let optionsHtml = '<option value="">-- Seleccionar --</option>';
+            productsList.forEach(p => {
+                optionsHtml += `<option value="${p.id}">${p.sku} - ${p.name}</option>`;
+            });
 
-    function removeRow(btn) {
-        btn.closest('tr').remove();
-        const container = document.getElementById('itemsContainer');
-        
-        if (container.children.length === 0) {
-            document.getElementById('emptyState').style.display = 'block';
-            rowCount = 0;
-        } else {
-            // Re-numerar filas visualmente
-            document.querySelectorAll('.row-index').forEach((el, i) => el.innerText = i + 1);
+            const html = `
+                <tr id="${rowId}" class="animate-fade-in">
+                    <td class="px-6 py-3 text-center text-slate-400 font-mono text-xs">${productIndex + 1}</td>
+                    <td class="px-6 py-3">
+                        <select name="items[${productIndex}][product_id]" required class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 ring-custom-primary outline-none bg-white">
+                            ${optionsHtml}
+                        </select>
+                    </td>
+                    <td class="px-6 py-3 text-center">
+                        <input type="number" name="items[${productIndex}][qty]" min="1" value="1" required class="w-full text-center px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 ring-custom-primary outline-none font-bold">
+                    </td>
+                    <td class="px-6 py-3 text-center">
+                        <button type="button" onclick="removeRow('${rowId}')" class="text-red-400 hover:text-red-600 transition">
+                            <i class="fa-solid fa-trash"></i>
+                        </button>
+                    </td>
+                </tr>
+            `;
+
+            container.insertAdjacentHTML('beforeend', html);
+            productIndex++;
+            checkEmptyState();
         }
-    }
-</script>
+
+        function removeRow(id) {
+            document.getElementById(id).remove();
+            checkEmptyState();
+        }
+
+        function checkEmptyState() {
+            const container = document.getElementById('itemsContainer');
+            const emptyState = document.getElementById('emptyState');
+            if (container.children.length === 0) {
+                emptyState.classList.remove('hidden');
+            } else {
+                emptyState.classList.add('hidden');
+            }
+        }
+    </script>
+
 @endsection

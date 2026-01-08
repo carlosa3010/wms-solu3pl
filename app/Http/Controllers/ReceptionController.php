@@ -8,6 +8,7 @@ use App\Models\ASNItem;
 use App\Models\Client;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log; // Importante para loguear fallos
 use App\Services\BinAllocator; // Servicio de Inteligencia de Bines
 
 class ReceptionController extends Controller
@@ -61,6 +62,7 @@ class ReceptionController extends Controller
             'client_id' => 'required|exists:clients,id',
             'asn_number' => 'required|unique:asns,asn_number',
             'expected_arrival_date' => 'required|date',
+            'total_packages' => 'required|integer|min:1', // Validar campo de cajas
             'items' => 'required|array|min:1', // Debe tener al menos un producto
             'items.*.product_id' => 'required|exists:products,id',
             'items.*.qty' => 'required|integer|min:1',
@@ -75,6 +77,7 @@ class ReceptionController extends Controller
                 'carrier_name' => $request->carrier_name,
                 'tracking_number' => $request->tracking_number,
                 'document_ref' => $request->document_ref,
+                'total_packages' => $request->total_packages, // Guardar el total de cajas para facturación
                 'notes' => $request->notes,
                 'status' => 'pending' // Estado inicial
             ]);
@@ -98,7 +101,7 @@ class ReceptionController extends Controller
             } catch (\Exception $e) {
                 // Si falla el auto-slotting (ej: producto sin medidas), continuamos sin error fatal.
                 // La ASN se crea pero requerirá asignación manual.
-                // Log::error("Fallo en Auto-Slotting ASN {$asn->asn_number}: " . $e->getMessage());
+                Log::warning("Fallo en Auto-Slotting ASN {$asn->asn_number}: " . $e->getMessage());
             }
         });
 

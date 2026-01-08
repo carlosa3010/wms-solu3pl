@@ -147,9 +147,10 @@ Route::middleware(['auth'])->group(function () {
             Route::post('/', [ReceptionController::class, 'store'])->name('receptions.store');
             Route::get('/{id}', [ReceptionController::class, 'show'])->name('receptions.show');
             Route::delete('/{id}', [ReceptionController::class, 'destroy'])->name('receptions.destroy');
-            Route::get('/{id}/labels', [ReceptionController::class, 'printLabels'])->name('receptions.labels');
-            
-            // Acciones adicionales
+    
+            // AGREGA ESTA LÍNEA ESPECÍFICAMENTE:
+            Route::get('/{id}/print-labels', [ReceptionController::class, 'printLabels'])->name('receptions.print_labels');
+    
             Route::post('/{asn}/receive', [ReceptionController::class, 'receiveItem'])->name('receptions.receive');
             Route::post('/{asn}/complete', [ReceptionController::class, 'complete'])->name('receptions.complete');
         });
