@@ -239,7 +239,9 @@ Route::middleware(['auth'])->group(function () {
             Route::put('/shipping-methods/{id}', [ShippingMethodController::class, 'update'])->name('shipping_methods.update');
             Route::patch('/shipping-methods/{id}/toggle', [ShippingMethodController::class, 'toggle'])->name('shipping_methods.toggle');
             Route::delete('/shipping-methods/{id}', [ShippingMethodController::class, 'destroy'])->name('shipping_methods.destroy');
-
+            Route::post('/shipping-methods/{id}/rates', [ShippingMethodController::class, 'storeRate'])->name('shipping_methods.rates.store');
+            Route::delete('/shipping-rates/{id}', [ShippingMethodController::class, 'destroyRate'])->name('shipping_methods.rates.destroy');
+            
             Route::get('/bins', [BinTypeController::class, 'index'])->name('bintypes.index');
             Route::post('/bins', [BinTypeController::class, 'store'])->name('bintypes.store');
             Route::delete('/bins/{id}', [BinTypeController::class, 'destroy'])->name('bintypes.destroy');

@@ -3,6 +3,8 @@
 namespace App\Http\Controllers;
 
 use App\Models\ShippingMethod;
+use App\Models\ShippingRate;
+use App\Models\State; // Importante
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 
@@ -10,8 +12,11 @@ class ShippingMethodController extends Controller
 {
     public function index()
     {
-        $methods = ShippingMethod::all();
-        return view('admin.settings.shipping_methods_index', compact('methods'));
+        // Cargamos los métodos con sus tarifas y los estados disponibles
+        $methods = ShippingMethod::with('rates.state')->get();
+        $states = State::orderBy('name')->get(); // Para el selector del modal
+        
+        return view('admin.settings.shipping_methods_index', compact('methods', 'states'));
     }
 
     public function store(Request $request)
@@ -23,7 +28,7 @@ class ShippingMethodController extends Controller
 
         ShippingMethod::create([
             'name' => $request->name,
-            'code' => Str::slug($request->name), // Genera 'envio-express' de 'Envío Express'
+            'code' => Str::slug($request->name),
             'description' => $request->description,
             'is_active' => true,
         ]);
@@ -62,5 +67,35 @@ class ShippingMethodController extends Controller
         $method = ShippingMethod::findOrFail($id);
         $method->delete();
         return redirect()->back()->with('success', 'Método eliminado.');
+    }
+
+    // --- NUEVAS FUNCIONES PARA TARIFAS ---
+
+    public function storeRate(Request $request, $id)
+    {
+        $request->validate([
+            'state_id' => 'required|exists:states,id',
+            'price' => 'required|numeric|min:0'
+        ]);
+
+        // Verificar si ya existe tarifa para ese estado y actualizarla o crearla
+        ShippingRate::updateOrCreate(
+            [
+                'shipping_method_id' => $id,
+                'state_id' => $request->state_id
+            ],
+            [
+                'price' => $request->price
+            ]
+        );
+
+        return redirect()->back()->with('success', 'Tarifa configurada correctamente.');
+    }
+
+    public function destroyRate($rateId)
+    {
+        $rate = ShippingRate::findOrFail($rateId);
+        $rate->delete();
+        return redirect()->back()->with('success', 'Tarifa eliminada.');
     }
 }

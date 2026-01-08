@@ -1,176 +1,198 @@
 @extends('layouts.admin')
 
-@section('title', 'Panel de Control')
-@section('header_title', 'Resumen Ejecutivo')
+@section('title', 'Centro de Comando')
+@section('header_title', 'Dashboard Operativo')
 
 @section('content')
-    <!-- Bienvenida y Contexto -->
-    <div class="mb-8">
-        <h2 class="text-xl md:text-2xl font-bold text-slate-800">Hola, {{ Auth::user()->name }}</h2>
-        <p class="text-sm text-slate-500">Aquí tienes el estado actual de tu operación logística a tiempo real.</p>
-    </div>
-
-    <!-- Rejilla de Indicadores (KPIs Comerciales) -->
-    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6 mb-8">
-        <!-- Ingresos -->
-        <div class="bg-white p-6 rounded-xl shadow-sm border-l-4 border-green-500 hover:shadow-md transition group">
-            <div class="flex justify-between items-start">
-                <div>
-                    <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Ingresos Proyectados</p>
-                    <h3 class="text-2xl font-bold text-slate-800 mt-1">$ {{ number_format($revenue ?? 0, 2) }}</h3>
-                </div>
-                <div class="p-2 bg-green-50 rounded text-green-600 group-hover:scale-110 transition-transform">
-                    <i class="fa-solid fa-dollar-sign"></i>
-                </div>
+    
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+        <div class="bg-white rounded-2xl p-6 shadow-sm border border-slate-100 flex items-center justify-between">
+            <div>
+                <p class="text-xs font-bold text-slate-400 uppercase tracking-widest">Nuevos (Hoy)</p>
+                <h3 class="text-3xl font-black text-slate-800 mt-2">{{ $ordersToday }}</h3>
+                <p class="text-[10px] text-slate-400 mt-1">Órdenes ingresadas</p>
+            </div>
+            <div class="w-12 h-12 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center text-xl">
+                <i class="fa-solid fa-file-circle-plus"></i>
             </div>
         </div>
+
+        <div class="bg-white rounded-2xl p-6 shadow-sm border border-slate-100 flex items-center justify-between">
+            <div>
+                <p class="text-xs font-bold text-slate-400 uppercase tracking-widest">Salidas (Hoy)</p>
+                <h3 class="text-3xl font-black text-emerald-600 mt-2">{{ $shippedToday }}</h3>
+                <p class="text-[10px] text-slate-400 mt-1">Órdenes completadas</p>
+            </div>
+            <div class="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-xl flex items-center justify-center text-xl">
+                <i class="fa-solid fa-truck-fast"></i>
+            </div>
+        </div>
+
+        <div class="bg-gradient-to-br from-slate-800 to-slate-900 rounded-2xl p-6 shadow-lg text-white flex items-center justify-between relative overflow-hidden">
+            <div class="relative z-10">
+                <p class="text-xs font-bold text-slate-300 uppercase tracking-widest">Eficiencia Diaria</p>
+                @php
+                    $efficiency = $ordersToday > 0 ? round(($shippedToday / $ordersToday) * 100) : 0;
+                    if($shippedToday > 0 && $ordersToday == 0) $efficiency = 100; // Si solo se despachó backlog
+                @endphp
+                <h3 class="text-3xl font-black mt-2">{{ $efficiency }}%</h3>
+                <p class="text-[10px] text-slate-400 mt-1">Conversión Entrada/Salida</p>
+            </div>
+            <div class="relative z-10 w-12 h-12 bg-white/10 rounded-xl flex items-center justify-center text-xl backdrop-blur-sm">
+                <i class="fa-solid fa-stopwatch"></i>
+            </div>
+            <div class="absolute -right-6 -bottom-10 text-9xl text-white/5 rotate-12">
+                <i class="fa-solid fa-chart-line"></i>
+            </div>
+        </div>
+    </div>
+
+    <h3 class="text-sm font-bold text-slate-500 uppercase tracking-wider mb-4 px-1">Estado del Backlog</h3>
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
         
-        <!-- Pedidos Totales -->
-        <div class="bg-white p-6 rounded-xl shadow-sm border-l-4 border-custom-primary hover:shadow-md transition group">
+        <a href="{{ route('admin.orders.index', ['status' => 'pending']) }}" class="group bg-white p-5 rounded-xl shadow-sm border-l-4 border-yellow-400 hover:shadow-md transition">
             <div class="flex justify-between items-start">
                 <div>
-                    <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Pedidos Mes</p>
-                    <h3 class="text-2xl font-bold text-slate-800 mt-1">{{ $totalOrders ?? 0 }}</h3>
+                    <h4 class="text-2xl font-bold text-slate-700">{{ $pendingOrders }}</h4>
+                    <p class="text-xs font-bold text-slate-400 uppercase mt-1">Pendientes</p>
                 </div>
-                <div class="p-2 bg-blue-50 rounded text-custom-primary group-hover:scale-110 transition-transform">
-                    <i class="fa-solid fa-cart-shopping"></i>
-                </div>
+                <i class="fa-regular fa-clock text-yellow-400 text-xl group-hover:scale-110 transition"></i>
             </div>
-        </div>
+        </a>
 
-        <!-- SKUs en Catálogo -->
-        <div class="bg-white p-6 rounded-xl shadow-sm border-l-4 border-purple-500 hover:shadow-md transition group">
+        <a href="{{ route('admin.orders.index', ['status' => 'picking']) }}" class="group bg-white p-5 rounded-xl shadow-sm border-l-4 border-blue-500 hover:shadow-md transition">
             <div class="flex justify-between items-start">
                 <div>
-                    <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Productos (SKUs)</p>
-                    <h3 class="text-2xl font-bold text-slate-800 mt-1">{{ $totalProducts ?? 0 }}</h3>
+                    <h4 class="text-2xl font-bold text-slate-700">{{ $processingOrders }}</h4>
+                    <p class="text-xs font-bold text-slate-400 uppercase mt-1">En Picking/Packing</p>
                 </div>
-                <div class="p-2 bg-purple-50 rounded text-purple-600 group-hover:scale-110 transition-transform">
-                    <i class="fa-solid fa-tags"></i>
-                </div>
+                <i class="fa-solid fa-boxes-packing text-blue-500 text-xl group-hover:scale-110 transition"></i>
             </div>
-        </div>
+        </a>
 
-        <!-- Pendientes de Despacho -->
-        <div class="bg-white p-6 rounded-xl shadow-sm border-l-4 border-red-500 hover:shadow-md transition group">
+        <a href="{{ route('admin.receptions.index') }}" class="group bg-white p-5 rounded-xl shadow-sm border-l-4 border-purple-500 hover:shadow-md transition">
             <div class="flex justify-between items-start">
                 <div>
-                    <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Pendientes</p>
-                    <h3 class="text-2xl font-bold text-slate-800 mt-1">{{ $pendingOrders ?? 0 }}</h3>
+                    <h4 class="text-2xl font-bold text-slate-700">{{ $pendingASNs }}</h4>
+                    <p class="text-xs font-bold text-slate-400 uppercase mt-1">Recepciones (ASN)</p>
                 </div>
-                <div class="p-2 bg-red-50 rounded text-red-600 group-hover:scale-110 transition-transform animate-pulse">
-                    <i class="fa-solid fa-clock"></i>
-                </div>
+                <i class="fa-solid fa-dolly text-purple-500 text-xl group-hover:scale-110 transition"></i>
             </div>
-        </div>
+        </a>
+
+        <a href="{{ route('admin.rma.index') }}" class="group bg-white p-5 rounded-xl shadow-sm border-l-4 border-red-500 hover:shadow-md transition">
+            <div class="flex justify-between items-start">
+                <div>
+                    <h4 class="text-2xl font-bold text-slate-700">{{ $pendingRMAs }}</h4>
+                    <p class="text-xs font-bold text-slate-400 uppercase mt-1">Devoluciones (RMA)</p>
+                </div>
+                <i class="fa-solid fa-rotate-left text-red-500 text-xl group-hover:scale-110 transition"></i>
+            </div>
+        </a>
     </div>
 
-    <!-- NUEVA SECCIÓN: KPIs DE ALMACENAMIENTO -->
-    <div class="mb-8">
-        <h3 class="font-bold text-slate-700 text-lg mb-4 flex items-center gap-2">
-            <i class="fa-solid fa-cubes-stacked text-custom-primary"></i> Capacidad de Almacenamiento
-        </h3>
-        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 md:gap-6">
-            
-            <!-- Capacidad Total -->
-            <div class="bg-white p-5 rounded-xl shadow-sm border border-slate-200 flex items-center justify-between">
-                <div>
-                    <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Total Bines (Instalados)</p>
-                    <h4 class="text-3xl font-bold text-slate-700 mt-1">{{ number_format($totalBins ?? 0) }}</h4>
-                </div>
-                <div class="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center text-slate-400">
-                    <i class="fa-solid fa-warehouse text-xl"></i>
-                </div>
-            </div>
-
-            <!-- Disponible -->
-            <div class="bg-white p-5 rounded-xl shadow-sm border border-slate-200 flex items-center justify-between">
-                <div>
-                    <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Espacios Disponibles</p>
-                    <h4 class="text-3xl font-bold text-emerald-500 mt-1">{{ number_format($availableBins ?? 0) }}</h4>
-                </div>
-                <div class="w-12 h-12 rounded-full bg-emerald-50 flex items-center justify-center text-emerald-500">
-                    <i class="fa-solid fa-check-circle text-xl"></i>
-                </div>
-            </div>
-
-            <!-- Ocupación -->
-            <div class="bg-white p-5 rounded-xl shadow-sm border border-slate-200 relative overflow-hidden group">
-                <div class="relative z-10 flex justify-between items-center">
-                    <div>
-                        <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Ocupación Actual</p>
-                        <div class="flex items-baseline gap-2 mt-1">
-                            <h4 class="text-3xl font-bold text-blue-600">{{ number_format($occupiedBins ?? 0) }}</h4>
-                            <span class="text-xs font-bold text-slate-400 bg-slate-100 px-2 py-1 rounded-full">{{ $occupancyRate ?? 0 }}%</span>
-                        </div>
-                    </div>
-                    <div class="w-12 h-12 rounded-full bg-blue-50 flex items-center justify-center text-blue-500">
-                        <i class="fa-solid fa-box-open text-xl"></i>
-                    </div>
-                </div>
-                <!-- Barra de progreso sutil al fondo -->
-                <div class="absolute bottom-0 left-0 h-1 bg-blue-100 w-full">
-                    <div class="h-full bg-blue-500 transition-all duration-1000" style="width: {{ $occupancyRate ?? 0 }}%"></div>
-                </div>
-            </div>
-
-        </div>
-    </div>
-
-    <!-- Sección de Accesos Directos y Gráficas Rápidas -->
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <!-- Acciones Rápidas -->
-        <div class="lg:col-span-1 bg-white rounded-xl shadow-sm p-6 border border-slate-200">
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-8">
+        
+        <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 lg:col-span-1">
             <h3 class="font-bold text-slate-700 mb-6 flex items-center gap-2">
-                <i class="fa-solid fa-bolt text-yellow-500"></i> Acciones Directas
+                <i class="fa-solid fa-warehouse text-custom-primary"></i> Capacidad
             </h3>
-            <div class="grid grid-cols-1 gap-3">
-                <a href="{{ route('admin.clients.create') }}" class="flex items-center gap-4 p-3 bg-slate-50 rounded-lg border border-slate-200 hover:border-custom-primary hover:bg-blue-50 transition group">
-                    <div class="w-10 h-10 bg-white rounded flex items-center justify-center text-slate-400 group-hover:text-custom-primary shadow-sm">
-                        <i class="fa-solid fa-user-plus"></i>
+            
+            <div class="flex items-center justify-center py-4">
+                <div class="relative w-40 h-40">
+                    <svg class="w-full h-full" viewBox="0 0 36 36">
+                        <path class="text-slate-100" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="currentColor" stroke-width="3" />
+                        <path class="{{ $occupancyRate > 90 ? 'text-red-500' : ($occupancyRate > 70 ? 'text-yellow-500' : 'text-custom-primary') }}" stroke-dasharray="{{ $occupancyRate }}, 100" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="currentColor" stroke-width="3" />
+                    </svg>
+                    <div class="absolute inset-0 flex flex-col items-center justify-center">
+                        <span class="text-3xl font-black text-slate-700">{{ $occupancyRate }}%</span>
+                        <span class="text-[10px] uppercase font-bold text-slate-400">Ocupación</span>
                     </div>
-                    <div>
-                        <p class="text-xs font-bold text-slate-700">Nuevo Cliente</p>
-                        <p class="text-[10px] text-slate-400">Registrar socio comercial</p>
-                    </div>
-                </a>
+                </div>
+            </div>
 
-                <a href="{{ route('admin.products.create') }}" class="flex items-center gap-4 p-3 bg-slate-50 rounded-lg border border-slate-200 hover:border-custom-primary hover:bg-blue-50 transition group">
-                    <div class="w-10 h-10 bg-white rounded flex items-center justify-center text-slate-400 group-hover:text-custom-primary shadow-sm">
-                        <i class="fa-solid fa-barcode"></i>
-                    </div>
-                    <div>
-                        <p class="text-xs font-bold text-slate-700">Registrar SKU</p>
-                        <p class="text-[10px] text-slate-400">Crear producto en catálogo</p>
-                    </div>
-                </a>
-
-                <a href="{{ route('admin.settings.index') }}" class="flex items-center gap-4 p-3 bg-slate-50 rounded-lg border border-slate-200 hover:border-custom-primary hover:bg-blue-50 transition group">
-                    <div class="w-10 h-10 bg-white rounded flex items-center justify-center text-slate-400 group-hover:text-custom-primary shadow-sm">
-                        <i class="fa-solid fa-palette"></i>
-                    </div>
-                    <div>
-                        <p class="text-xs font-bold text-slate-700">Ajustes de Marca</p>
-                        <p class="text-[10px] text-slate-400">Cambiar colores y logos</p>
-                    </div>
-                </a>
+            <div class="space-y-3 mt-4">
+                <div class="flex justify-between text-sm border-b border-slate-50 pb-2">
+                    <span class="text-slate-500">Total Ubicaciones</span>
+                    <span class="font-bold text-slate-700">{{ number_format($totalBins) }}</span>
+                </div>
+                <div class="flex justify-between text-sm border-b border-slate-50 pb-2">
+                    <span class="text-slate-500">Ocupadas</span>
+                    <span class="font-bold text-slate-700">{{ number_format($occupiedBins) }}</span>
+                </div>
+                <div class="flex justify-between text-sm">
+                    <span class="text-slate-500">Disponibles</span>
+                    <span class="font-bold text-emerald-600">{{ number_format($totalBins - $occupiedBins) }}</span>
+                </div>
             </div>
         </div>
 
-        <!-- Placeholder para Gráfica de Actividad -->
-        <div class="lg:col-span-2 bg-white rounded-xl shadow-sm p-6 border border-slate-200 flex flex-col items-center justify-center min-h-[300px] text-center">
-            <div class="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center text-slate-300 mb-4">
-                <i class="fa-solid fa-chart-line text-3xl"></i>
+        <div class="lg:col-span-2 space-y-6">
+            
+            <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                <div class="p-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
+                    <h3 class="font-bold text-slate-700 text-sm">Actividad Reciente</h3>
+                    <a href="{{ route('admin.orders.index') }}" class="text-xs text-blue-600 font-bold hover:underline">Ver todo</a>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left text-sm">
+                        <tbody class="divide-y divide-slate-50">
+                            @forelse($recentOrders as $order)
+                                <tr class="hover:bg-slate-50 transition">
+                                    <td class="p-4">
+                                        <p class="font-bold text-slate-700">{{ $order->order_number }}</p>
+                                        <p class="text-[10px] text-slate-400">{{ $order->client->company_name }}</p>
+                                    </td>
+                                    <td class="p-4 text-center">
+                                        @if($order->status == 'pending')
+                                            <span class="bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded text-[10px] font-bold">Pendiente</span>
+                                        @elseif($order->status == 'shipped')
+                                            <span class="bg-green-100 text-green-700 px-2 py-0.5 rounded text-[10px] font-bold">Despachado</span>
+                                        @else
+                                            <span class="bg-blue-100 text-blue-700 px-2 py-0.5 rounded text-[10px] font-bold">{{ ucfirst($order->status) }}</span>
+                                        @endif
+                                    </td>
+                                    <td class="p-4 text-right text-xs text-slate-500">
+                                        {{ $order->updated_at->diffForHumans() }}
+                                    </td>
+                                </tr>
+                            @empty
+                                <tr>
+                                    <td colspan="3" class="p-6 text-center text-slate-400 text-xs">Sin actividad reciente.</td>
+                                </tr>
+                            @endforelse
+                        </tbody>
+                    </table>
+                </div>
             </div>
-            <h4 class="font-bold text-slate-700">Flujo de Pedidos</h4>
-            <p class="text-xs text-slate-400 max-w-xs">Gráfica de rendimiento operativo (Siguiente módulo en desarrollo).</p>
+
+            <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                <div class="p-4 border-b border-slate-100 bg-slate-50">
+                    <h3 class="font-bold text-slate-700 text-sm">Top Clientes (Mes Actual)</h3>
+                </div>
+                <div class="p-4">
+                    <div class="space-y-4">
+                        @foreach($topClients as $client)
+                            <div class="flex items-center justify-between">
+                                <div class="flex items-center gap-3">
+                                    <div class="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 font-bold text-xs">
+                                        {{ substr($client->company_name, 0, 1) }}
+                                    </div>
+                                    <span class="text-sm font-bold text-slate-700">{{ $client->company_name }}</span>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <div class="h-2 w-24 bg-slate-100 rounded-full overflow-hidden">
+                                        {{-- Barra de progreso visual simple basada en un maximo teorico de 100 pedidos --}}
+                                        <div class="h-full bg-custom-primary" style="width: {{ min(($client->orders_count / 100) * 100, 100) }}%"></div>
+                                    </div>
+                                    <span class="text-xs font-bold text-slate-600">{{ $client->orders_count }} Ops</span>
+                                </div>
+                            </div>
+                        @endforeach
+                    </div>
+                </div>
+            </div>
+
         </div>
     </div>
-@endsection
-
-@section('scripts')
-<script>
-    // Scripts específicos para el Dashboard si fueran necesarios
-    console.log('Dashboard cargado con KPIs de Almacén');
-</script>
 @endsection

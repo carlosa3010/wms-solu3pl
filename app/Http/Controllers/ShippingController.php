@@ -7,7 +7,7 @@ use App\Models\Order;
 use App\Models\ServiceCharge;
 use App\Models\ClientBillingAgreement;
 use App\Models\StockMovement;
-use App\Services\BillingService; // Importar BillingService
+use App\Services\BillingService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
 
@@ -15,7 +15,6 @@ class ShippingController extends Controller
 {
     protected $billingService;
 
-    // Inyectar BillingService en el constructor
     public function __construct(BillingService $billingService)
     {
         $this->billingService = $billingService;
@@ -23,8 +22,10 @@ class ShippingController extends Controller
 
     public function index(Request $request)
     {
+        // CORRECCIÓN: Solo mostrar órdenes que están en proceso de empaque/listas
+        // Se eliminaron 'allocated' y 'picking' para respetar el flujo secuencial.
         $query = Order::with(['client', 'branch'])
-            ->whereIn('status', ['allocated', 'picking', 'packing']);
+            ->whereIn('status', ['packing']); 
 
         if ($request->filled('search')) {
             $search = $request->search;
@@ -44,20 +45,16 @@ class ShippingController extends Controller
         return view('admin.operations.shipping.process', compact('order'));
     }
 
-    /**
-     * Finaliza despacho, aplica cobros automáticos por Picking y Empaque Premium,
-     * y cobra el costo de envío a la billetera si corresponde.
-     */
     public function ship(Request $request, $id)
     {
-        $order = Order::with(['items.allocations', 'client.billingAgreement.billingProfile', 'client.servicePlan'])->findOrFail($id); // Cargar servicePlan
+        $order = Order::with(['items.allocations', 'client.billingAgreement.billingProfile', 'client.servicePlan'])->findOrFail($id);
 
         $request->validate([
             'carrier_name' => 'required|string',
             'tracking_number' => 'required|string',
             'total_packages' => 'required|integer|min:1',
             'total_weight_kg' => 'required|numeric|min:0.1',
-            'shipping_cost' => 'nullable|numeric|min:0', // Validar costo de envío opcional
+            'shipping_cost' => 'nullable|numeric|min:0',
         ]);
 
         try {
@@ -71,8 +68,7 @@ class ShippingController extends Controller
                     'notes' => $order->notes . "\n[DESPACHO] " . now()
                 ]);
 
-                // 2. LÓGICA DE COBRO AUTOMÁTICO (Facturación Mensual/Diaria)
-                // Se integra con el nuevo sistema de planes. Si no hay plan, usa la lógica legacy si existe.
+                // 2. LÓGICA DE COBRO AUTOMÁTICO
                 
                 // --- INTEGRACIÓN BILLETERA (COBRO DE ENVÍO) ---
                 if ($request->filled('shipping_cost') && $request->shipping_cost > 0) {
@@ -83,17 +79,11 @@ class ShippingController extends Controller
                             $order->id
                         );
                     } catch (\Exception $e) {
-                        // Si falla el cobro a la billetera, lanzar excepción para revertir transacción
                         throw new \Exception("Error al cobrar envío de la billetera: " . $e->getMessage());
                     }
                 }
                 
-                // --- CARGOS POR SERVICIOS OPERATIVOS (PICKING, EMPAQUE, ETC) ---
-                // Estos cargos se agregan a la pre-factura del mes, no a la billetera.
-                
-                // NOTA: La lógica de cobro diario (picking, empaque, etc.) idealmente se maneja en el comando nocturno
-                // para consolidar. Sin embargo, si deseas registrar el cargo INMEDIATAMENTE al despachar:
-                
+                // --- CARGOS POR SERVICIOS OPERATIVOS ---
                 $plan = $order->client->billingAgreement->servicePlan ?? null;
                 
                 if ($plan) {
@@ -138,12 +128,11 @@ class ShippingController extends Controller
                         ]);
                     }
                 } else {
-                    // LÓGICA LEGACY (Si no hay plan nuevo, usar perfil de facturación antiguo si existe)
+                    // LÓGICA LEGACY
                     $agreement = $order->client->billingAgreement;
                     if ($agreement && $agreement->billingProfile) {
                         $profile = $agreement->billingProfile;
 
-                        // Cargo por Picking Base
                         ServiceCharge::create([
                             'client_id' => $order->client_id,
                             'type' => 'picking',
@@ -154,7 +143,6 @@ class ShippingController extends Controller
                             'reference_id' => $order->id
                         ]);
 
-                        // Cargo por Empaque Premium (Si está marcado en la orden)
                         if ($order->is_premium_packing) {
                             ServiceCharge::create([
                                 'client_id' => $order->client_id,

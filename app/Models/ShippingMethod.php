@@ -16,4 +16,9 @@ class ShippingMethod extends Model
         'cost',             // Costo base (opcional)
         'is_active',
     ];
+    
+    public function rates()
+    {
+        return $this->hasMany(ShippingRate::class);
+    }
 }
