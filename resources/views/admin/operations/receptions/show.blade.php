@@ -47,13 +47,6 @@
                     <a href="{{ route('admin.receptions.print_labels', $asn->id) }}" target="_blank" class="bg-indigo-50 text-indigo-600 px-4 py-2 rounded-xl font-bold hover:bg-indigo-100 transition flex items-center gap-2">
                         <i class="fa-solid fa-print"></i> Etiquetas
                     </a>
-                    
-                    <form action="{{ route('admin.receptions.receive', $asn->id) }}" method="POST">
-                        @csrf 
-                        <button type="button" class="bg-custom-primary text-white px-5 py-2.5 rounded-xl font-bold shadow-lg shadow-blue-500/30 hover:brightness-95 transition flex items-center gap-2">
-                            <i class="fa-solid fa-play"></i> Iniciar Recepción
-                        </button>
-                    </form>
                 @endif
             </div>
         </div>

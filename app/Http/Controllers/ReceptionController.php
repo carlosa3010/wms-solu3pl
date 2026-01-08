@@ -151,51 +151,30 @@ class ReceptionController extends Controller
     }
 
     /**
-     * Generar vista de impresión de etiquetas UNITARIAS.
-     * Genera una etiqueta individual por cada producto físico (1 a 1) para pegar en la caja.
+     * Generar vista de impresión de ETIQUETAS MASTER (Bultos).
+     * Se genera una etiqueta por cada bulto/caja declarada en la ASN.
+     * No se imprimen etiquetas de producto unitario aquí.
      */
     public function printLabels($id)
     {
-        $asn = ASN::with(['items.product', 'items.allocations.location'])->findOrFail($id);
+        $asn = ASN::with('client')->findOrFail($id);
         
         $labels = [];
-        
-        foreach ($asn->items as $item) {
-            // Escenario A: Con Auto-Slotting (Ubicaciones asignadas por el sistema)
-            if ($item->allocations->count() > 0) {
-                foreach ($item->allocations as $allocation) {
-                    $qty = $allocation->quantity;
-                    
-                    // Generamos UNA etiqueta por cada unidad física planificada para esta ubicación
-                    for ($i = 1; $i <= $qty; $i++) {
-                        $labels[] = [
-                            'product_name' => $item->product->name,
-                            'sku' => $item->product->sku,
-                            'location_code' => $allocation->location->code, // Destino específico
-                            'asn_number' => $asn->asn_number,
-                            'qr_data' => $allocation->location->code, // Escanear para confirmar guardado
-                            'counter' => "$i / $qty", // Ej: "Caja 5 / 20"
-                            'quantity' => 1 // Cada etiqueta representa 1 unidad
-                        ];
-                    }
-                }
-            } 
-            // Escenario B: Sin asignación (Ubicación manual requerida)
-            else {
-                $qty = $item->expected_quantity;
-                // Generamos etiquetas genéricas para asignar en piso
-                for ($i = 1; $i <= $qty; $i++) {
-                    $labels[] = [
-                        'product_name' => $item->product->name,
-                        'sku' => $item->product->sku,
-                        'location_code' => 'POR ASIGNAR',
-                        'asn_number' => $asn->asn_number,
-                        'qr_data' => $item->product->sku, // Escanear producto para identificar
-                        'counter' => "$i / $qty",
-                        'quantity' => 1
-                    ];
-                }
-            }
+        // Aseguramos que haya al menos 1 bulto para imprimir si el campo es nulo o 0
+        $totalPackages = max($asn->total_packages, 1);
+
+        for ($i = 1; $i <= $totalPackages; $i++) {
+            $labels[] = [
+                'client_name'   => $asn->client->company_name, // Dato crítico 3PL para no mezclar carga
+                'asn_number'    => $asn->asn_number,
+                'tracking'      => $asn->tracking_number ?? 'S/N',
+                'carrier'       => $asn->carrier_name ?? 'N/A',
+                'box_number'    => "$i / $totalPackages", // Ej: Caja 1 / 10
+                // QR Único para identificar este bulto específico al escanear en Recepción
+                'qr_data'       => "ASN:{$asn->asn_number}|BOX:{$i}|TOTAL:{$totalPackages}",
+                'date'          => now()->format('d/m/Y'),
+                'type'          => 'MASTER LABEL'
+            ];
         }
 
         return view('admin.operations.receptions.print_labels', compact('asn', 'labels'));
