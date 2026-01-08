@@ -7,13 +7,21 @@ use Illuminate\Support\Facades\Auth;
 
 class AuthController extends Controller
 {
-    // Muestra el formulario de login
+    /**
+     * Muestra el formulario de login.
+     * Si ya está logueado, redirige según su rol.
+     */
     public function showLoginForm()
     {
+        if (Auth::check()) {
+            return $this->redirectBasedOnRole(Auth::user());
+        }
         return view('auth.login');
     }
 
-    // Procesa el login
+    /**
+     * Procesa la autenticación.
+     */
     public function login(Request $request)
     {
         // Validar datos
@@ -22,26 +30,11 @@ class AuthController extends Controller
             'password' => ['required'],
         ]);
 
-        // Intentar autenticar (Auth::attempt hace el hash check automáticamente)
+        // Intentar autenticar
         if (Auth::attempt($credentials, $request->boolean('remember'))) {
             $request->session()->regenerate();
 
-            // --- REDIRECCIÓN INTELIGENTE POR ROL ---
-            $user = Auth::user();
-
-            // 1. Si es Personal Administrativo (Admin, Manager, Supervisor)
-            // Se agrupan estos roles para que accedan al Dashboard principal
-            if (in_array($user->role, ['admin', 'manager', 'supervisor'])) {
-                return redirect()->route('admin.dashboard');
-            }
-            
-            // 2. Si es Operario de Bodega
-            if ($user->role === 'operator') {
-                return redirect()->route('warehouse.station');
-            }
-
-            // 3. Si es Cliente (role 'user' o cualquier otro no definido)
-            return redirect()->route('client.portal');
+            return $this->redirectBasedOnRole(Auth::user());
         }
 
         // Si falla
@@ -50,12 +43,40 @@ class AuthController extends Controller
         ])->onlyInput('email');
     }
 
-    // Cerrar Sesión
+    /**
+     * Cierra la sesión.
+     */
     public function logout(Request $request)
     {
         Auth::logout();
         $request->session()->invalidate();
         $request->session()->regenerateToken();
         return redirect()->route('login');
+    }
+
+    /**
+     * Lógica centralizada de redirección según el Rol.
+     */
+    protected function redirectBasedOnRole($user)
+    {
+        // 1. Personal Administrativo -> Panel Admin
+        if (in_array($user->role, ['admin', 'manager', 'supervisor'])) {
+            return redirect()->route('admin.dashboard');
+        }
+        
+        // 2. Operario de Bodega -> Panel Warehouse (PDA)
+        // Apuntamos a 'warehouse.index' que es el dashboard de botones grandes que creamos
+        if (in_array($user->role, ['operator', 'warehouse'])) {
+            return redirect()->route('warehouse.index');
+        }
+
+        // 3. Clientes -> Portal Cliente
+        // Asumimos que 'client' o cualquier otro rol va al portal
+        if ($user->role === 'client' || $user->role === 'user') {
+            return redirect()->route('client.portal');
+        }
+
+        // Fallback por seguridad
+        return redirect()->route('client.portal');
     }
 }

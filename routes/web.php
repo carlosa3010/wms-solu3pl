@@ -26,7 +26,7 @@ use App\Http\Controllers\PackageTypeController;
 use App\Http\Controllers\Client\ClientPortalController;
 use App\Http\Controllers\Auth\PasswordController;
 use App\Http\Controllers\PickingController;
-use App\Http\Controllers\WarehouseAppController; // <--- NUEVO CONTROLADOR OPERATIVO
+use App\Http\Controllers\WarehouseAppController; 
 
 /*
 |--------------------------------------------------------------------------
@@ -321,7 +321,14 @@ Route::middleware(['auth'])->group(function () {
 
         // 1. Recepción (Inbound)
         Route::get('/reception', [WarehouseAppController::class, 'receptionIndex'])->name('reception.index');
+        Route::get('/reception/{id}', [WarehouseAppController::class, 'receptionShow'])->name('reception.show'); // <--- VER ASN
         Route::post('/reception/scan', [WarehouseAppController::class, 'receptionScan'])->name('reception.scan');
+        Route::post('/reception/undo', [WarehouseAppController::class, 'receptionUndo'])->name('reception.undo'); 
+        Route::post('/reception/{id}/finish', [WarehouseAppController::class, 'receptionFinish'])->name('reception.finish');
+        Route::get('/reception/product/{id}/label', [WarehouseAppController::class, 'printProductLabel'])->name('reception.label');
+        
+        // --- RUTA NUEVA: CHECK-IN DE BULTOS ---
+        Route::post('/reception/{id}/checkin', [WarehouseAppController::class, 'receptionCheckin'])->name('reception.checkin');
 
         // 2. Picking
         Route::get('/picking', [WarehouseAppController::class, 'pickingIndex'])->name('picking.index');

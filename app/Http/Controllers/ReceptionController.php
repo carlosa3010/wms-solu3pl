@@ -8,34 +8,38 @@ use App\Models\ASNItem;
 use App\Models\Client;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log; // Importante para loguear fallos
-use App\Services\BinAllocator; // Servicio de Inteligencia de Bines
+use Illuminate\Support\Facades\Log;
+use App\Services\BinAllocator; 
 
 class ReceptionController extends Controller
 {
     /**
-     * Listado de Recepciones (ASN) con filtros.
+     * Listado de Recepciones (ASN) con filtros CORREGIDOS.
      */
     public function index(Request $request)
     {
-        $query = ASN::with(['client', 'items']);
+        $query = ASN::with(['client', 'items'])
+                    ->orderBy('created_at', 'desc'); // Ordenar por defecto
 
-        // Filtro por búsqueda general (ASN, Referencia, Cliente)
-        if ($request->filled('search')) {
-            $search = $request->search;
-            $query->where('asn_number', 'like', "%{$search}%")
-                  ->orWhere('document_ref', 'like', "%{$search}%")
-                  ->orWhereHas('client', function($q) use ($search) {
-                      $q->where('company_name', 'like', "%{$search}%");
-                  });
-        }
-
-        // Filtro por estado
+        // 1. Filtro por estado (Aplicar primero)
         if ($request->filled('status')) {
             $query->where('status', $request->status);
         }
 
-        $asns = $query->orderBy('created_at', 'desc')->paginate(15);
+        // 2. Búsqueda General (AGRUPADA para no romper el filtro de estado)
+        if ($request->filled('search')) {
+            $search = $request->search;
+            $query->where(function($q) use ($search) {
+                $q->where('asn_number', 'like', "%{$search}%")
+                  ->orWhere('document_ref', 'like', "%{$search}%")
+                  ->orWhere('tracking_number', 'like', "%{$search}%") // Agregado tracking
+                  ->orWhereHas('client', function($subQ) use ($search) {
+                      $subQ->where('company_name', 'like', "%{$search}%");
+                  });
+            });
+        }
+
+        $asns = $query->paginate(15)->withQueryString(); // Mantiene filtros en paginación
         
         return view('admin.operations.receptions.index', compact('asns'));
     }
@@ -46,30 +50,28 @@ class ReceptionController extends Controller
     public function create()
     {
         $clients = Client::where('is_active', true)->orderBy('company_name')->get();
-        // Generamos un ID sugerido único para facilitar la creación
         $nextId = 'ASN-' . strtoupper(Str::random(6)); 
         
         return view('admin.operations.receptions.create', compact('clients', 'nextId'));
     }
 
     /**
-     * Guarda la ASN y ejecuta la lógica de Auto-Slotting.
+     * Guarda la ASN y ejecuta Auto-Slotting.
      */
     public function store(Request $request)
     {
-        // Validación de datos
         $request->validate([
             'client_id' => 'required|exists:clients,id',
             'asn_number' => 'required|unique:asns,asn_number',
             'expected_arrival_date' => 'required|date',
-            'total_packages' => 'required|integer|min:1', // Validar campo de cajas
-            'items' => 'required|array|min:1', // Debe tener al menos un producto
+            'total_packages' => 'required|integer|min:1',
+            'items' => 'required|array|min:1',
             'items.*.product_id' => 'required|exists:products,id',
             'items.*.qty' => 'required|integer|min:1',
         ]);
 
         DB::transaction(function () use ($request) {
-            // 1. Crear Cabecera de la ASN
+            // 1. Cabecera
             $asn = ASN::create([
                 'asn_number' => $request->asn_number,
                 'client_id' => $request->client_id,
@@ -77,12 +79,12 @@ class ReceptionController extends Controller
                 'carrier_name' => $request->carrier_name,
                 'tracking_number' => $request->tracking_number,
                 'document_ref' => $request->document_ref,
-                'total_packages' => $request->total_packages, // Guardar el total de cajas para facturación
+                'total_packages' => $request->total_packages,
                 'notes' => $request->notes,
-                'status' => 'pending' // Estado inicial
+                'status' => 'pending'
             ]);
 
-            // 2. Crear los Ítems (Detalle de productos esperados)
+            // 2. Ítems
             foreach ($request->items as $itemData) {
                 ASNItem::create([
                     'asn_id' => $asn->id,
@@ -93,57 +95,69 @@ class ReceptionController extends Controller
                 ]);
             }
 
-            // 3. EJECUTAR INTELIGENCIA (AUTO-SLOTTING)
-            // Intentamos calcular las ubicaciones ideales automáticamente
+            // 3. Auto-Slotting (Inteligencia de ubicación)
             try {
-                $allocator = new BinAllocator();
-                $allocator->allocateASN($asn);
+                if (class_exists(BinAllocator::class)) {
+                    $allocator = new BinAllocator();
+                    $allocator->allocateASN($asn);
+                }
             } catch (\Exception $e) {
-                // Si falla el auto-slotting (ej: producto sin medidas), continuamos sin error fatal.
-                // La ASN se crea pero requerirá asignación manual.
                 Log::warning("Fallo en Auto-Slotting ASN {$asn->asn_number}: " . $e->getMessage());
             }
         });
 
         return redirect()->route('admin.receptions.index')
-            ->with('success', 'ASN creada exitosamente. Planificación de ubicación generada.');
+            ->with('success', 'ASN creada exitosamente.');
     }
 
     /**
-     * Ver Detalle de la ASN con su Plan de Ubicación.
+     * Ver Detalle (Dashboard de Supervisión).
      */
     public function show($id)
     {
-        // Cargamos relaciones profundas para mostrar el detalle completo
         $asn = ASN::with([
             'client', 
-            'items.product', 
-            'items.allocations.location.warehouse' // Para mostrar dónde se guardará cada cosa
+            'items.product',
+            // Si usas el sistema de allocated bins, descomenta la siguiente línea:
+            'items.allocations.location' 
         ])->findOrFail($id);
+
+        // Cálculos para KPIs en tiempo real
+        $totalExpected = $asn->items->sum('expected_quantity');
+        $totalReceived = $asn->items->sum('received_quantity');
         
-        return view('admin.operations.receptions.show', compact('asn'));
+        // Evitar división por cero
+        $progress = $totalExpected > 0 ? round(($totalReceived / $totalExpected) * 100) : 0;
+
+        // Detectar si hay discrepancias (Faltantes o Sobrantes) para mostrar alertas
+        $hasDiscrepancies = $asn->items->contains(function ($item) {
+            return $item->received_quantity !== $item->expected_quantity;
+        });
+
+        return view('admin.operations.receptions.show', compact('asn', 'totalExpected', 'totalReceived', 'progress', 'hasDiscrepancies'));
     }
 
     /**
-     * Eliminar una ASN (Solo si está en estado 'pending' o 'draft').
+     * Eliminar ASN (Solo si no ha iniciado).
      */
     public function destroy($id)
     {
         $asn = ASN::findOrFail($id);
 
-        // Protección de integridad: No borrar si ya se empezó a trabajar
+        // Bloquear borrado si ya se empezó a trabajar en bodega
         if (!in_array($asn->status, ['pending', 'draft'])) {
-            return back()->withErrors(['error' => 'No se puede eliminar una ASN que ya está en proceso o completada.']);
+            return back()->withErrors(['error' => 'No se puede eliminar una ASN en proceso o completada.']);
         }
 
         DB::transaction(function () use ($asn) {
-            // Eliminar asignaciones planificadas primero
-            foreach ($asn->items as $item) {
-                $item->allocations()->delete();
+            // Limpiar asignaciones si existen
+            if (method_exists($asn->items()->getRelated(), 'allocations')) {
+                foreach ($asn->items as $item) {
+                    $item->allocations()->delete();
+                }
             }
-            // Eliminar items
+            
             $asn->items()->delete();
-            // Eliminar cabecera
             $asn->delete();
         });
 
@@ -151,26 +165,23 @@ class ReceptionController extends Controller
     }
 
     /**
-     * Generar vista de impresión de ETIQUETAS MASTER (Bultos).
-     * Se genera una etiqueta por cada bulto/caja declarada en la ASN.
-     * No se imprimen etiquetas de producto unitario aquí.
+     * Imprimir Etiquetas Master de Bultos.
      */
     public function printLabels($id)
     {
         $asn = ASN::with('client')->findOrFail($id);
         
         $labels = [];
-        // Aseguramos que haya al menos 1 bulto para imprimir si el campo es nulo o 0
         $totalPackages = max($asn->total_packages, 1);
 
         for ($i = 1; $i <= $totalPackages; $i++) {
             $labels[] = [
-                'client_name'   => $asn->client->company_name, // Dato crítico 3PL para no mezclar carga
+                'client_name'   => $asn->client->company_name,
                 'asn_number'    => $asn->asn_number,
                 'tracking'      => $asn->tracking_number ?? 'S/N',
                 'carrier'       => $asn->carrier_name ?? 'N/A',
-                'box_number'    => "$i / $totalPackages", // Ej: Caja 1 / 10
-                // QR Único para identificar este bulto específico al escanear en Recepción
+                'box_number'    => "$i / $totalPackages",
+                // QR para "Check-in" rápido de bultos
                 'qr_data'       => "ASN:{$asn->asn_number}|BOX:{$i}|TOTAL:{$totalPackages}",
                 'date'          => now()->format('d/m/Y'),
                 'type'          => 'MASTER LABEL'
