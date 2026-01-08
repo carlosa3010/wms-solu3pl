@@ -11,7 +11,7 @@
     
     if (class_exists('\App\Models\ASN')) {
         try {
-            $pendingAsnsCount = \App\Models\ASN::where('status', 'sent')->count(); // 'sent' es el estado inicial que ve el admin
+            $pendingAsnsCount = \App\Models\ASN::where('status', 'sent')->count(); 
         } catch (\Exception $e) {}
     }
 
@@ -30,14 +30,11 @@
         $perms = [];
     } else {
         $isAdmin = $user->role === 'admin';
-        // Asumimos un sistema simple de permisos o solo admin por ahora
-        // Si tienes una columna permissions en json, úsala:
         $perms = $user->permissions ?? [];
     }
     
-    // Función helper simple para permisos (puedes expandirla)
+    // Función helper simple para permisos
     $canSee = function($module) use ($isAdmin) {
-        // Por ahora, si es admin ve todo. Si quieres granularidad, ajusta aquí.
         return $isAdmin; 
     };
 @endphp
@@ -53,16 +50,12 @@
         <link rel="icon" type="image/x-icon" href="{{ Storage::url($siteFavicon) }}">
     @endif
 
-    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     
-    <!-- Alpine.js -->
     <script src="//unpkg.com/alpinejs" defer></script>
 
-    <!-- FontAwesome -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
-    <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
     
     <style>
@@ -93,7 +86,6 @@
 
     <div id="mobile-overlay" class="fixed inset-0 bg-black/50 z-40 hidden transition-opacity lg:hidden" onclick="toggleSidebar()"></div>
 
-    <!-- BARRA LATERAL (SIDEBAR) -->
     <aside id="sidebar" class="bg-custom-sidebar text-white w-64 flex-shrink-0 flex flex-col h-full fixed lg:relative z-50 transition-transform duration-300 -translate-x-full lg:translate-x-0 shadow-2xl">
         
         <div class="h-16 flex items-center px-6 border-b border-white/10 bg-black/20 shrink-0">
@@ -109,7 +101,6 @@
 
         <nav class="flex-1 overflow-y-auto py-4 px-3 space-y-1 custom-scrollbar">
             
-            <!-- SECCIÓN: OPERATIVO -->
             <div class="mb-4">
                 <a href="{{ route('admin.dashboard') }}" class="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all {{ request()->routeIs('admin.dashboard') ? 'bg-custom-primary text-white shadow-lg' : 'text-slate-300 hover:bg-white/10 hover:text-white' }}">
                     <i class="fa-solid fa-chart-pie w-5 text-center"></i>
@@ -117,7 +108,6 @@
                 </a>
             </div>
 
-            <!-- SECCIÓN: COMERCIAL -->
             <div x-data="{ open: {{ request()->routeIs('admin.clients.*') || request()->routeIs('admin.crm.*') ? 'true' : 'false' }} }" class="mb-1">
                 <button @click="open = !open" class="w-full flex justify-between items-center px-3 py-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest hover:text-white transition-colors focus:outline-none">
                     <span>Comercial</span>
@@ -135,7 +125,6 @@
                 </div>
             </div>
 
-            <!-- SECCIÓN: INVENTARIO -->
             <div x-data="{ open: {{ request()->routeIs('admin.products.*') || request()->routeIs('admin.categories.*') || request()->routeIs('admin.inventory.*') ? 'true' : 'false' }} }" class="mb-1">
                 <button @click="open = !open" class="w-full flex justify-between items-center px-3 py-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest hover:text-white transition-colors focus:outline-none">
                     <span>Inventario</span>
@@ -165,7 +154,6 @@
                 </div>
             </div>
 
-            <!-- SECCIÓN: OPERACIONES -->
             <div x-data="{ open: {{ request()->routeIs('admin.receptions.*') || request()->routeIs('admin.orders.*') || request()->routeIs('admin.picking.*') || request()->routeIs('admin.shipping.*') || request()->routeIs('admin.transfers.*') || request()->routeIs('admin.rma.*') ? 'true' : 'false' }} }" class="mb-1">
                 <button @click="open = !open" class="w-full flex justify-between items-center px-3 py-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest hover:text-white transition-colors focus:outline-none">
                     <span>Operaciones</span>
@@ -199,7 +187,6 @@
                 </div>
             </div>
 
-            <!-- SECCIÓN: FINANZAS (NUEVO) -->
             <div x-data="{ open: {{ request()->routeIs('admin.billing.*') ? 'true' : 'false' }} }" class="mb-1">
                 <button @click="open = !open" class="w-full flex justify-between items-center px-3 py-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest hover:text-white transition-colors focus:outline-none">
                     <span>Finanzas</span>
@@ -221,7 +208,6 @@
                 </div>
             </div>
 
-            <!-- SECCIÓN: INFRAESTRUCTURA -->
             <div x-data="{ open: {{ request()->routeIs('admin.branches.*') || request()->routeIs('admin.inventory.map') || request()->routeIs('admin.coverage.*') ? 'true' : 'false' }} }" class="mb-1">
                 <button @click="open = !open" class="w-full flex justify-between items-center px-3 py-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest hover:text-white transition-colors focus:outline-none">
                     <span>Infraestructura</span>
@@ -243,8 +229,7 @@
                 </div>
             </div>
 
-            <!-- SECCIÓN: CONFIGURACIÓN -->
-            <div x-data="{ open: {{ request()->routeIs('admin.settings.*') || request()->routeIs('admin.users.*') || request()->routeIs('admin.payment_methods.*') || request()->routeIs('admin.shipping_methods.*') || request()->routeIs('admin.bintypes.*') ? 'true' : 'false' }} }" class="mb-1">
+            <div x-data="{ open: {{ request()->routeIs('admin.settings.*') || request()->routeIs('admin.users.*') || request()->routeIs('admin.payment_methods.*') || request()->routeIs('admin.shipping_methods.*') || request()->routeIs('admin.bintypes.*') || request()->routeIs('admin.settings.packages.*') ? 'true' : 'false' }} }" class="mb-1">
                 <button @click="open = !open" class="w-full flex justify-between items-center px-3 py-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest hover:text-white transition-colors focus:outline-none">
                     <span>Configuración</span>
                     <i class="fa-solid fa-chevron-down text-[10px] transition-transform duration-200" :class="open ? '' : '-rotate-90'"></i>
@@ -254,7 +239,12 @@
                         <i class="fa-solid fa-cubes w-5 text-center"></i>
                         <span class="text-sm font-medium">Tipos Contenedor</span>
                     </a>
-                    <a href="{{ route('admin.settings.index') }}" class="flex items-center gap-3 px-3 py-2 rounded-lg transition-all {{ request()->routeIs('admin.settings.*') ? 'bg-custom-primary text-white' : 'text-slate-300 hover:bg-white/10 hover:text-white' }}">
+                    <a href="{{ route('admin.settings.packages.index') }}" class="flex items-center gap-3 px-3 py-2 rounded-lg transition-all {{ request()->routeIs('admin.settings.packages.*') ? 'bg-custom-primary text-white' : 'text-slate-300 hover:bg-white/10 hover:text-white' }}">
+                        <i class="fa-solid fa-box w-5 text-center"></i>
+                        <span class="text-sm font-medium">Cajas & Empaques</span>
+                    </a>
+                    
+                    <a href="{{ route('admin.settings.index') }}" class="flex items-center gap-3 px-3 py-2 rounded-lg transition-all {{ request()->routeIs('admin.settings.index') ? 'bg-custom-primary text-white' : 'text-slate-300 hover:bg-white/10 hover:text-white' }}">
                         <i class="fa-solid fa-gears w-5 text-center"></i>
                         <span class="text-sm font-medium">Sistema</span>
                     </a>
@@ -275,7 +265,6 @@
 
         </nav>
 
-        <!-- Footer del Sidebar -->
         <div class="p-4 border-t border-white/10 bg-black/20 shrink-0">
             <div class="flex items-center gap-3">
                 <div class="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center text-xs font-bold text-white uppercase border-2 border-white/20">
@@ -289,10 +278,8 @@
         </div>
     </aside>
 
-    <!-- PANEL DE CONTENIDO PRINCIPAL -->
     <main class="flex-1 flex flex-col min-w-0 bg-slate-100 h-full relative">
         
-        <!-- ENCABEZADO SUPERIOR (HEADER) -->
         <header class="h-16 bg-white shadow-sm flex items-center justify-between px-4 lg:px-8 border-b border-slate-200 shrink-0 z-30">
             <div class="flex items-center gap-4">
                 <button onclick="toggleSidebar()" class="lg:hidden p-2 text-slate-600 hover:bg-slate-100 rounded-lg transition">
@@ -303,7 +290,6 @@
 
             <div class="flex items-center gap-3 lg:gap-5">
                 
-                <!-- CAMPANA DE NOTIFICACIONES -->
                 <div class="relative">
                     <button onclick="toggleNotificationDropdown()" id="notificationBtn" class="relative p-2.5 text-slate-400 hover:text-custom-primary transition rounded-xl hover:bg-slate-50 group">
                         <i class="fa-regular fa-bell text-xl group-hover:rotate-12 transition-transform"></i>
@@ -357,7 +343,6 @@
 
                 <div class="h-8 w-px bg-slate-200 hidden sm:block"></div>
 
-                <!-- Perfil de Usuario -->
                 <div class="relative">
                     <button onclick="toggleUserDropdown()" id="userBtn" class="flex items-center gap-3 hover:bg-slate-50 p-1.5 rounded-xl transition border border-transparent hover:border-slate-200 group">
                         <div class="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center text-slate-400 group-hover:text-custom-primary transition-colors">
@@ -401,7 +386,6 @@
     </main>
 </div>
 
-<!-- Lógica de Interfaz -->
 <script>
     function toggleSidebar() {
         const sidebar = document.getElementById('sidebar');

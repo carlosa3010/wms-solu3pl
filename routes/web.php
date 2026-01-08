@@ -22,6 +22,7 @@ use App\Http\Controllers\RMAController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\PaymentMethodController;
 use App\Http\Controllers\ShippingMethodController;
+use App\Http\Controllers\PackageTypeController; // Controlador de Cajas
 use App\Http\Controllers\Client\ClientPortalController;
 use App\Http\Controllers\Auth\PasswordController;
 use App\Http\Controllers\PickingController;
@@ -148,7 +149,6 @@ Route::middleware(['auth'])->group(function () {
             Route::get('/{id}', [ReceptionController::class, 'show'])->name('receptions.show');
             Route::delete('/{id}', [ReceptionController::class, 'destroy'])->name('receptions.destroy');
     
-            // AGREGA ESTA LÍNEA ESPECÍFICAMENTE:
             Route::get('/{id}/print-labels', [ReceptionController::class, 'printLabels'])->name('receptions.print_labels');
     
             Route::post('/{asn}/receive', [ReceptionController::class, 'receiveItem'])->name('receptions.receive');
@@ -164,13 +164,11 @@ Route::middleware(['auth'])->group(function () {
             Route::get('/{id}/picking-list', [OrderController::class, 'printPickingList'])->name('orders.picking');
             Route::post('/{id}/fulfill', [OrderController::class, 'fulfill'])->name('orders.fulfill');
             
-            // RUTA AÑADIDA: Obtener productos por cliente para AJAX
             Route::get('/get-client-products/{clientId}', [OrderController::class, 'getClientProducts'])->name('get_client_products');
             Route::post('/{id}/cancel', [OrderController::class, 'cancel'])->name('orders.cancel'); 
         });
 
         // NUEVO MÓDULO DE PICKING
-        // CORRECCIÓN: Se usa name('picking.') para evitar 'admin.admin.picking'
         Route::prefix('operations/picking')->name('picking.')->group(function () {
             Route::get('/', [PickingController::class, 'index'])->name('index');
             Route::post('/allocate/{id}', [PickingController::class, 'allocateSingle'])->name('allocate_single');
@@ -191,7 +189,6 @@ Route::middleware(['auth'])->group(function () {
             Route::get('/{transfer}/manifest', [TransferController::class, 'printManifest'])->name('transfers.manifest');
             Route::get('/{transfer}/label', [TransferController::class, 'printLabel'])->name('transfers.label');
             
-            // --- NUEVAS RUTAS DE PROCESAMIENTO (Ship & Receive) ---
             Route::post('/{id}/ship', [TransferController::class, 'ship'])->name('transfers.ship');
             Route::post('/{id}/receive', [TransferController::class, 'receive'])->name('transfers.receive');
         });
@@ -201,7 +198,6 @@ Route::middleware(['auth'])->group(function () {
             Route::get('/create', [RMAController::class, 'create'])->name('rma.create');
             Route::post('/', [RMAController::class, 'store'])->name('rma.store');
             Route::get('/{id}', [RMAController::class, 'show'])->name('rma.show');
-            // ACTUALIZADO: Cambiado a updateStatus y método PATCH para coincidir con la vista Show y el Controlador
             Route::patch('/{id}/status', [RMAController::class, 'updateStatus'])->name('rma.update_status');
         });
 
@@ -247,6 +243,14 @@ Route::middleware(['auth'])->group(function () {
             Route::get('/bins', [BinTypeController::class, 'index'])->name('bintypes.index');
             Route::post('/bins', [BinTypeController::class, 'store'])->name('bintypes.store');
             Route::delete('/bins/{id}', [BinTypeController::class, 'destroy'])->name('bintypes.destroy');
+
+            // --- GESTIÓN DE CAJAS Y PAQUETES (CORREGIDO) ---
+            Route::get('/packages', [PackageTypeController::class, 'index'])->name('settings.packages.index');
+            Route::get('/packages/create', [PackageTypeController::class, 'create'])->name('settings.packages.create');
+            Route::post('/packages', [PackageTypeController::class, 'store'])->name('settings.packages.store');
+            Route::get('/packages/{id}/edit', [PackageTypeController::class, 'edit'])->name('settings.packages.edit');
+            Route::put('/packages/{id}', [PackageTypeController::class, 'update'])->name('settings.packages.update');
+            Route::delete('/packages/{id}', [PackageTypeController::class, 'destroy'])->name('settings.packages.destroy');
         });
 
         // Módulo: Usuarios
