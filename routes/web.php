@@ -22,10 +22,11 @@ use App\Http\Controllers\RMAController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\PaymentMethodController;
 use App\Http\Controllers\ShippingMethodController;
-use App\Http\Controllers\PackageTypeController; // Controlador de Cajas
+use App\Http\Controllers\PackageTypeController;
 use App\Http\Controllers\Client\ClientPortalController;
 use App\Http\Controllers\Auth\PasswordController;
 use App\Http\Controllers\PickingController;
+use App\Http\Controllers\WarehouseAppController; // <--- NUEVO CONTROLADOR OPERATIVO
 
 /*
 |--------------------------------------------------------------------------
@@ -112,10 +113,8 @@ Route::middleware(['auth'])->group(function () {
             Route::get('/get-sources', [InventoryController::class, 'getSources'])->name('inventory.get_sources');
             Route::get('/get-bins', [InventoryController::class, 'getBins'])->name('inventory.get_bins');
             
-            // RUTA AÑADIDA: Obtener estados por país para AJAX
             Route::get('/get-states/{countryId}', [OrderController::class, 'getStatesByCountry'])->name('get_states');
             
-            // Ruta principal del mapa
             Route::get('/map', [WarehouseManagementController::class, 'index'])->name('inventory.map');
         });
 
@@ -124,19 +123,16 @@ Route::middleware(['auth'])->group(function () {
         Route::get('/coverage', [WarehouseManagementController::class, 'coverage'])->name('coverage.index');
         Route::put('/branches/{id}/coverage', [WarehouseManagementController::class, 'updateCoverage'])->name('branches.coverage');
         
-        // --- RUTAS CRÍTICAS DEL MAPA Y LAYOUT ---
         Route::post('warehouses/generate-layout', [WarehouseManagementController::class, 'generateLayout'])->name('warehouses.generate_layout');
         Route::post('warehouses/save-rack', [WarehouseManagementController::class, 'saveRack'])->name('warehouses.save_rack');
         Route::get('warehouses/rack-details', [WarehouseManagementController::class, 'getRackDetails'])->name('warehouses.rack_details');
         Route::get('warehouses/{id}/layout-data', [WarehouseManagementController::class, 'getLayoutData'])->name('warehouses.layout_data');
         Route::get('warehouses/{id}/labels', [WarehouseManagementController::class, 'printLabels'])->name('warehouses.labels');
         
-        // Operaciones de Sucursales
         Route::post('/branches', [WarehouseManagementController::class, 'store'])->name('branches.store');
         Route::put('/branches/{branch}', [WarehouseManagementController::class, 'update'])->name('branches.update');
         Route::delete('/branches/{branch}', [WarehouseManagementController::class, 'destroy'])->name('branches.destroy');
         
-        // Operaciones de Bodegas
         Route::post('/warehouses', [WarehouseManagementController::class, 'storeWarehouse'])->name('warehouses.store'); 
         Route::put('/warehouses/{id}', [WarehouseManagementController::class, 'updateWarehouse'])->name('warehouses.update'); 
         Route::delete('/warehouses/{id}', [WarehouseManagementController::class, 'destroyWarehouse'])->name('warehouses.destroy');
@@ -168,7 +164,6 @@ Route::middleware(['auth'])->group(function () {
             Route::post('/{id}/cancel', [OrderController::class, 'cancel'])->name('orders.cancel'); 
         });
 
-        // NUEVO MÓDULO DE PICKING
         Route::prefix('operations/picking')->name('picking.')->group(function () {
             Route::get('/', [PickingController::class, 'index'])->name('index');
             Route::post('/allocate/{id}', [PickingController::class, 'allocateSingle'])->name('allocate_single');
@@ -201,7 +196,7 @@ Route::middleware(['auth'])->group(function () {
             Route::patch('/{id}/status', [RMAController::class, 'updateStatus'])->name('rma.update_status');
         });
 
-        // MÓDULO: FINANZAS (Billing)
+        // MÓDULO: FINANZAS
         Route::prefix('billing')->name('billing.')->group(function () {
             Route::get('/', [BillingController::class, 'index'])->name('index');
             Route::get('/payments', [BillingController::class, 'paymentsIndex'])->name('payments.index');
@@ -244,7 +239,7 @@ Route::middleware(['auth'])->group(function () {
             Route::post('/bins', [BinTypeController::class, 'store'])->name('bintypes.store');
             Route::delete('/bins/{id}', [BinTypeController::class, 'destroy'])->name('bintypes.destroy');
 
-            // --- GESTIÓN DE CAJAS Y PAQUETES (CORREGIDO) ---
+            // GESTIÓN DE CAJAS
             Route::get('/packages', [PackageTypeController::class, 'index'])->name('settings.packages.index');
             Route::get('/packages/create', [PackageTypeController::class, 'create'])->name('settings.packages.create');
             Route::post('/packages', [PackageTypeController::class, 'store'])->name('settings.packages.store');
@@ -300,7 +295,6 @@ Route::middleware(['auth'])->group(function () {
             Route::post('/{id}/action', [ClientPortalController::class, 'rmaAction'])->name('rma.action');
         });
         
-        // Facturación Cliente
         Route::prefix('billing')->group(function () {
             Route::get('/', [ClientPortalController::class, 'billing'])->name('billing.index');
             Route::post('/payment', [ClientPortalController::class, 'storePayment'])->name('billing.store_payment');
@@ -316,5 +310,37 @@ Route::middleware(['auth'])->group(function () {
         Route::get('/support', [ClientPortalController::class, 'support'])->name('support');
     });
 
-    Route::get('/warehouse/station', [DashboardController::class, 'warehouseStation'])->name('warehouse.station');
+    // ==========================================
+    // PANEL WAREHOUSE (OPERATIVO / PDA)
+    // ==========================================
+    Route::middleware(['auth'])->prefix('warehouse')->name('warehouse.')->group(function () {
+        
+        // Dashboard y Lookup Global
+        Route::get('/', [WarehouseAppController::class, 'index'])->name('index');
+        Route::get('/lookup', [WarehouseAppController::class, 'lookup'])->name('lookup');
+
+        // 1. Recepción (Inbound)
+        Route::get('/reception', [WarehouseAppController::class, 'receptionIndex'])->name('reception.index');
+        Route::post('/reception/scan', [WarehouseAppController::class, 'receptionScan'])->name('reception.scan');
+
+        // 2. Picking
+        Route::get('/picking', [WarehouseAppController::class, 'pickingIndex'])->name('picking.index');
+        Route::get('/picking/{id}', [WarehouseAppController::class, 'pickingProcess'])->name('picking.process');
+
+        // 3. Packing
+        Route::get('/packing', [WarehouseAppController::class, 'packingIndex'])->name('packing.index');
+        Route::get('/packing/{order}', [WarehouseAppController::class, 'packingProcess'])->name('packing.process');
+        Route::post('/packing/{order}/close', [WarehouseAppController::class, 'packingClose'])->name('packing.close');
+
+        // 4. Shipping / Despacho
+        Route::get('/shipping', [WarehouseAppController::class, 'shippingIndex'])->name('shipping.index');
+        Route::post('/shipping/manifest', [WarehouseAppController::class, 'shippingManifest'])->name('shipping.manifest');
+
+        // 5. Inventario
+        Route::get('/inventory', [WarehouseAppController::class, 'inventoryIndex'])->name('inventory.index');
+        
+        // 6. Devoluciones (RMA)
+        Route::get('/rma', [WarehouseAppController::class, 'rmaIndex'])->name('rma.index');
+        Route::get('/rma/{id}', [WarehouseAppController::class, 'rmaProcess'])->name('rma.process');
+    });
 });
