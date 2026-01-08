@@ -1,37 +1,33 @@
 <?php
 
+// app/Models/RMAItem.php
+
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
 class RMAItem extends Model
 {
-    use HasFactory;
-
     protected $table = 'rma_items';
-
+    
     protected $fillable = [
-        'rma_id',
-        'product_id',
-        'quantity',
-        'condition', // new, damaged, open_box
-        'action_taken' // restock, quarantine, discard
+        'rma_id', 
+        'product_id', 
+        'qty', 
+        'condition', 
+        'resolution', 
+        'notes',
+        'inspection_notes', // Nuevo
+        'reception_photos'  // Nuevo
     ];
 
-    /**
-     * Relación: Pertenece a una cabecera de RMA.
-     */
-    public function rma()
-    {
-        return $this->belongsTo(RMA::class, 'rma_id');
-    }
+    // Cast automático de JSON a Array
+    protected $casts = [
+        'reception_photos' => 'array',
+    ];
 
-    /**
-     * Relación: Referencia al producto del catálogo.
-     */
     public function product()
     {
-        return $this->belongsTo(Product::class, 'product_id');
+        return $this->belongsTo(Product::class);
     }
 }

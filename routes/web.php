@@ -201,7 +201,8 @@ Route::middleware(['auth'])->group(function () {
             Route::get('/create', [RMAController::class, 'create'])->name('rma.create');
             Route::post('/', [RMAController::class, 'store'])->name('rma.store');
             Route::get('/{id}', [RMAController::class, 'show'])->name('rma.show');
-            Route::post('/{id}/process', [RMAController::class, 'process'])->name('rma.process');
+            // ACTUALIZADO: Cambiado a updateStatus y método PATCH para coincidir con la vista Show y el Controlador
+            Route::patch('/{id}/status', [RMAController::class, 'updateStatus'])->name('rma.update_status');
         });
 
         // MÓDULO: FINANZAS (Billing)
