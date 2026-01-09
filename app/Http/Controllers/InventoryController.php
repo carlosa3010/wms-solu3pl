@@ -22,45 +22,35 @@ class InventoryController extends Controller
      */
     public function stock(Request $request)
     {
-        // NOTA IMPORTANTE: Para la vista que modificamos (con stock físico, reservado, disponible),
-        // es mejor iterar sobre PRODUCTOS, no sobre Inventory (que son líneas de bines).
-        // Sin embargo, si quieres mantener la vista detallada por bin, usamos Inventory.
-        // Aquí mantengo la lógica original pero optimizada.
-        
-        $query = Inventory::with(['product.client', 'location.warehouse']);
+        // Optimización: Usamos Product como base para el reporte consolidado
+        $query = Product::with(['client', 'inventory.location', 'orderItems.order'])
+                        ->whereHas('inventory'); // Solo productos con algún movimiento histórico o stock
 
-        // Filtro de búsqueda general (SKU, Nombre, LPN, Ubicación)
+        // Filtro de búsqueda general
         if ($request->filled('search')) {
             $search = $request->search;
             $query->where(function($q) use ($search) {
-                $q->whereHas('product', function($pq) use ($search) {
-                    $pq->where('sku', 'like', "%{$search}%")
-                       ->orWhere('name', 'like', "%{$search}%");
-                })
-                ->orWhere('lpn', 'like', "%{$search}%")
-                ->orWhereHas('location', function($lq) use ($search) {
-                    $lq->where('code', 'like', "%{$search}%");
-                });
+                $q->where('sku', 'like', "%{$search}%")
+                  ->orWhere('name', 'like', "%{$search}%")
+                  ->orWhereHas('inventory', function($iq) use ($search) {
+                      $iq->where('lpn', 'like', "%{$search}%")
+                        ->orWhereHas('location', function($lq) use ($search) {
+                            $lq->where('code', 'like', "%{$search}%");
+                        });
+                  });
             });
         }
 
         // Filtro por Cliente
         if ($request->filled('client_id')) {
-            $query->whereHas('product', function($q) use ($request) {
-                $q->where('client_id', $request->client_id);
-            });
+            $query->where('client_id', $request->client_id);
         }
 
-        // Ordenamiento y paginación
-        $inventory = $query->orderBy('updated_at', 'desc')->paginate(20);
+        // Paginación
+        $inventory = $query->orderBy('name')->paginate(20);
         
-        // Lista de clientes para el filtro
         $clients = Client::where('is_active', true)->orderBy('company_name')->get();
 
-        // Para la vista "resumida" que te di antes (Físico/Reservado/Disponible), 
-        // deberíamos pasar también una colección de productos si esa es la vista principal.
-        // Si usas la vista detallada por ubicación, $inventory es correcto.
-        
         return view('admin.inventory.stock', compact('inventory', 'clients'));
     }
 
@@ -72,14 +62,12 @@ class InventoryController extends Controller
     {
         $query = StockMovement::with(['product', 'fromLocation', 'toLocation', 'user']);
 
-        // Filtro por SKU
         if ($request->filled('sku')) {
             $query->whereHas('product', function($q) use ($request) {
                 $q->where('sku', 'like', "%{$request->sku}%");
             });
         }
 
-        // Filtro por Tipo de Movimiento
         if ($request->filled('type')) {
             $query->where('reason', 'like', "%{$request->type}%");
         }
@@ -96,8 +84,8 @@ class InventoryController extends Controller
     public function adjustments(Request $request)
     {
         $products = Product::orderBy('sku')->get();
-        // Limitamos la carga de ubicaciones para no saturar la vista si hay miles
-        $locations = Location::with('warehouse')->orderBy('code')->take(1000)->get();
+        // Limitamos para rendimiento, idealmente usar Select2 con AJAX
+        $locations = Location::with('warehouse')->where('is_blocked', false)->orderBy('code')->take(500)->get();
 
         return view('admin.inventory.adjustments', compact('products', 'locations'));
     }
@@ -119,28 +107,24 @@ class InventoryController extends Controller
             DB::transaction(function () use ($request) {
                 $location = Location::where('code', $request->location_code)->first();
                 
-                // Buscar o inicializar inventario en esa ubicación
                 $inventory = Inventory::firstOrCreate(
                     ['product_id' => $request->product_id, 'location_id' => $location->id],
                     ['quantity' => 0]
                 );
 
                 if ($request->type === 'in') {
-                    // Entrada
                     $inventory->increment('quantity', $request->quantity);
                     $fromLoc = null;
                     $toLoc = $location->id;
                 } else {
-                    // Salida
                     if ($inventory->quantity < $request->quantity) {
-                        throw new \Exception("Stock insuficiente en la ubicación para realizar la salida.");
+                        throw new \Exception("Stock insuficiente en la ubicación {$location->code}.");
                     }
                     $inventory->decrement('quantity', $request->quantity);
                     $fromLoc = $location->id;
                     $toLoc = null;
                 }
 
-                // Registrar en Kardex
                 StockMovement::create([
                     'product_id' => $request->product_id,
                     'from_location_id' => $fromLoc,
@@ -152,17 +136,17 @@ class InventoryController extends Controller
                     'created_at' => now()
                 ]);
 
-                // Verificar alertas de stock bajo si es una salida
+                // Alerta Stock Bajo
                 if ($request->type === 'out') {
                     $product = Product::find($request->product_id);
-                    if ($product->min_stock > 0) {
-                        $currentTotalStock = Inventory::where('product_id', $product->id)->sum('quantity');
+                    if ($product->min_stock_level > 0) {
+                        $currentTotal = Inventory::where('product_id', $product->id)->sum('quantity');
                         
-                        if ($currentTotalStock <= $product->min_stock && $product->client && $product->client->email) {
+                        if ($currentTotal <= $product->min_stock_level && $product->client && $product->client->email) {
                             try {
-                                Mail::to($product->client->email)->send(new LowStockAlert($product, $currentTotalStock));
+                                Mail::to($product->client->email)->send(new LowStockAlert($product, $currentTotal));
                             } catch (\Exception $e) {
-                                Log::error("Error enviando alerta stock bajo: " . $e->getMessage());
+                                Log::error("Error enviando alerta stock: " . $e->getMessage());
                             }
                         }
                     }
@@ -177,66 +161,72 @@ class InventoryController extends Controller
     }
 
     /**
-     * AJAX: Obtener bines con stock (Origen para traslados).
+     * AJAX CRÍTICO: Obtener bines con stock (Origen para traslados).
+     * Soluciona el problema de que no se mostraban ubicaciones en el select.
      */
     public function getSources(Request $request)
     {
         try {
             $productId = $request->product_id;
-            $warehouseId = $request->warehouse_id;
-
-            if (!$productId || !$warehouseId) {
+            
+            if (!$productId) {
                 return response()->json([]);
             }
 
-            $locations = Location::where('warehouse_id', $warehouseId)
-                ->whereHas('inventory', function($q) use ($productId) {
-                    $q->where('product_id', $productId)->where('quantity', '>', 0);
+            // Buscar ubicaciones con stock > 0 del producto
+            $locations = Location::whereHas('inventory', function($q) use ($productId) {
+                    $q->where('product_id', $productId)
+                      ->where('quantity', '>', 0);
                 })
+                ->where('is_blocked', false)
                 ->with(['inventory' => function($q) use ($productId) {
                     $q->where('product_id', $productId);
                 }])
                 ->get();
 
-            // Formatear respuesta para el select del frontend
             $data = $locations->map(function($loc) {
+                $qty = $loc->inventory->first()->quantity ?? 0;
                 return [
                     'id' => $loc->id,
                     'code' => $loc->code,
-                    'quantity' => $loc->inventory->first()->quantity ?? 0
+                    'quantity' => $qty,
+                    'text' => $loc->code . ' (Disp: ' . $qty . ')' // Formato Select2
                 ];
             });
 
             return response()->json($data);
 
         } catch (\Exception $e) {
-            Log::error("Error en getSources: " . $e->getMessage());
-            return response()->json(['error' => 'Error al consultar bines de origen'], 500);
+            Log::error("Error getSources: " . $e->getMessage());
+            return response()->json(['error' => 'Error consultando stock'], 500);
         }
     }
 
     /**
-     * AJAX: Obtener todos los bines de una bodega (Destino para traslados).
+     * AJAX: Obtener todos los bines destino.
      */
     public function getBins(Request $request)
     {
         try {
-            $warehouseId = $request->warehouse_id;
+            // Si no se envía warehouse, usamos default
+            $warehouseId = $request->warehouse_id; 
+            
+            $query = Location::where('is_blocked', false)->orderBy('code');
 
-            if (!$warehouseId) {
-                return response()->json([]);
+            if ($warehouseId) {
+                $query->where('warehouse_id', $warehouseId);
             }
             
-            $locations = Location::where('warehouse_id', $warehouseId)
-                ->orderBy('code')
-                ->select('id', 'code')
-                ->get();
+            // Excluir origen si se envía
+            if($request->has('exclude_id')) {
+                $query->where('id', '!=', $request->exclude_id);
+            }
 
-            return response()->json($locations);
+            return response()->json($query->select('id', 'code')->get());
 
         } catch (\Exception $e) {
-            Log::error("Error en getBins: " . $e->getMessage());
-            return response()->json(['error' => 'Error al consultar bines de destino'], 500);
+            Log::error("Error getBins: " . $e->getMessage());
+            return response()->json([], 500);
         }
     }
 
@@ -247,6 +237,7 @@ class InventoryController extends Controller
     {
         $term = $request->get('q');
         $locations = Location::where('code', 'LIKE', "%{$term}%")
+            ->where('is_blocked', false)
             ->select('id', 'code')
             ->limit(20)
             ->get();

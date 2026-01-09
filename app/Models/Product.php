@@ -26,12 +26,12 @@ class Product extends Model
         'height_cm',
         'image_path',
         'min_stock_level',
-        'requires_serial_number', // Vital para el módulo de recepción
-        'is_active'
+        'requires_serial_number',
+        // 'is_active', // ELIMINADO: No existe en la base de datos y causaba Error 500
     ];
 
     protected $casts = [
-        'is_active' => 'boolean',
+        // 'is_active' => 'boolean', // ELIMINADO
         'requires_serial_number' => 'boolean',
         'weight_kg' => 'float',
         'length_cm' => 'float',
@@ -57,7 +57,8 @@ class Product extends Model
     }
 
     /**
-     * Relación necesaria para calcular el stock comprometido en órdenes pendientes.
+     * Relación con los ítems de órdenes.
+     * Vital para calcular el stock comprometido.
      */
     public function orderItems()
     {
@@ -67,8 +68,9 @@ class Product extends Model
     // --- CÁLCULOS DE LÓGICA DE STOCK (WMS CORE) ---
 
     /**
-     * STOCK FÍSICO: Cantidad total real en la bodega.
-     * Excluye ubicaciones bloqueadas (como Cuarentena o Dañados).
+     * STOCK FÍSICO: 
+     * Suma total de lo que existe en la tabla de inventario (estantes),
+     * excluyendo ubicaciones bloqueadas (como Cuarentena o Dañados).
      */
     public function getPhysicalStockAttribute()
     {
@@ -76,41 +78,44 @@ class Product extends Model
             ->whereHas('location', function ($q) {
                 $q->where('is_blocked', false);
             })
-            ->sum('quantity');
+            ->sum('quantity') ?? 0;
     }
 
     /**
      * STOCK COMPROMETIDO (RESERVADO):
-     * Suma de productos en órdenes que han sido creadas (Pending/Allocated/Processing)
-     * pero que aún no han sido despachadas.
-     *
-     * CORRECCIÓN: Se usan las columnas 'requested_quantity' y 'picked_quantity'
-     * para coincidir con la migración de base de datos.
+     * Suma de productos en órdenes activas (Pending/Allocated/Processing)
+     * que aún NO han sido recolectados físicamente.
      */
     public function getCommittedStockAttribute()
     {
-        // Buscamos ítems de este producto en órdenes "vivas"
+        // 1. Obtener ítems de este producto en órdenes vivas
         $items = $this->orderItems()
             ->whereHas('order', function ($q) {
                 $q->whereIn('status', ['pending', 'allocated', 'processing', 'backorder']);
             })
             ->get();
 
-        // Calculamos cuánto falta por pickear de esas órdenes
+        // 2. Calcular cuánto falta por pickear
+        // Solicitado (requested_quantity) - Ya Recolectado (picked_quantity)
         return $items->sum(function ($item) {
-            // Si pidieron 10 y ya pickearon 4, quedan 6 "lógicamente reservadas"
-            return max(0, $item->requested_quantity - $item->picked_quantity);
+            $requested = $item->requested_quantity ?? 0;
+            $picked = $item->picked_quantity ?? 0;
+            
+            return max(0, $requested - $picked);
         });
     }
 
     /**
      * STOCK DISPONIBLE:
-     * Lo que realmente podemos vender hoy.
-     * Físico - Comprometido.
+     * Lo que realmente podemos vender o trasladar hoy.
+     * Fórmula: Físico - Comprometido.
      */
     public function getAvailableStockAttribute()
     {
-        return max(0, $this->physical_stock - $this->committed_stock);
+        $physical = $this->physical_stock;
+        $committed = $this->committed_stock;
+
+        return max(0, $physical - $committed);
     }
 
     // --- OTROS ACCESSORS ---
@@ -124,8 +129,7 @@ class Product extends Model
     }
 
     /**
-     * Alias para compatibilidad con vistas anteriores.
-     * Muestra el físico (lo que hay en estantes).
+     * Alias para compatibilidad con vistas anteriores (Muestra Stock Físico).
      */
     public function getTotalStockAttribute()
     {

@@ -231,7 +231,7 @@
         const stateSelect = document.getElementById('customer_state');
         const clientSelect = document.getElementById('client_id');
 
-        // 1. Manejo dinámico de Estados (Usando ruta absoluta)
+        // 1. Manejo dinámico de Estados
         countrySelect.addEventListener('change', function() {
             const selectedOption = this.options[this.selectedIndex];
             const countryId = selectedOption.getAttribute('data-id');
@@ -278,7 +278,6 @@
             }
 
             if (clientId) {
-                // CORREGIDO: Ruta para obtener productos
                 const url = `{{ url('/admin/orders/get-client-products') }}/${clientId}`;
                 
                 fetch(url)
@@ -288,7 +287,7 @@
                     })
                     .then(data => {
                         clientProducts = data;
-                        addBtn.disabled = false; // Habilitamos el botón
+                        addBtn.disabled = false;
                         if(data.length === 0) {
                              alert("Este cliente no tiene productos con stock disponible.");
                         }
@@ -318,10 +317,8 @@
         const clone = template.content.cloneNode(true);
         const row = clone.querySelector('tr');
         
-        // Reemplazar index en nombres de campos
         row.innerHTML = row.innerHTML.replace(/INDEX/g, rowIndex);
         
-        // Cargar SKUs del cliente actual
         const select = row.querySelector('.sku-selector');
         clientProducts.forEach(p => {
             const opt = document.createElement('option');
