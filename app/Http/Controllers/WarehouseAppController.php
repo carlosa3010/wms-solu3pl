@@ -14,7 +14,9 @@ use App\Models\RMA;
 use App\Models\Product;
 use App\Models\Location;
 use App\Models\Inventory;
-use App\Models\StockMovement; // Asegúrate de tener este modelo importado
+use App\Models\StockMovement;
+use App\Models\OrderItem;
+use App\Models\OrderAllocation; // Asegúrate de importar esto para el Picking
 
 class WarehouseAppController extends Controller
 {
@@ -54,7 +56,6 @@ class WarehouseAppController extends Controller
     
     public function receptionIndex()
     {
-        // ASNs pendientes, enviadas o parciales
         $asns = ASN::whereIn('status', ['sent', 'partial', 'pending', 'draft', 'in_process'])
                     ->orderBy('expected_arrival_date', 'asc')
                     ->get();
@@ -65,7 +66,6 @@ class WarehouseAppController extends Controller
     {
         $asn = ASN::with(['client', 'items.product'])->findOrFail($id);
         
-        // Calcular progreso
         $totalExpected = $asn->items->sum('expected_quantity');
         $totalReceived = $asn->items->sum('received_quantity');
         $progress = $totalExpected > 0 ? ($totalReceived / $totalExpected) * 100 : 0;
@@ -73,9 +73,6 @@ class WarehouseAppController extends Controller
         return view('warehouse.reception.show', compact('asn', 'progress', 'totalReceived', 'totalExpected'));
     }
 
-    /**
-     * PASO 1: Validación de Bultos (Check-in)
-     */
     public function receptionCheckin(Request $request, $id)
     {
         $request->validate(['packages_received' => 'required|integer|min:1']);
@@ -91,9 +88,6 @@ class WarehouseAppController extends Controller
         return back()->with('success', 'Check-in completado. Puede escanear productos.');
     }
 
-    /**
-     * PASO 2: Procesa el escaneo de un producto (Normal, Serializado o Dañado)
-     */
     public function receptionScan(Request $request)
     {
         $request->validate([
@@ -106,18 +100,16 @@ class WarehouseAppController extends Controller
         try {
             DB::beginTransaction();
 
-            // 1. Identificar Producto
             $product = Product::where('sku', $request->barcode)->first();
             if (!$product) return back()->with('error', 'Producto no encontrado en el maestro.');
 
-            // 2. Validar que pertenece a la ASN
             $asnItem = ASNItem::where('asn_id', $request->asn_id)
                               ->where('product_id', $product->id)
                               ->first();
 
             if (!$asnItem) return back()->with('error', "El SKU {$product->sku} no pertenece a esta ASN.");
 
-            // --- LÓGICA DE SERIALES ---
+            // Validar Serial
             if ($product->requires_serial_number && empty($request->serial_number)) {
                 return back()->with('ask_serial', [
                     'sku' => $product->sku,
@@ -127,24 +119,17 @@ class WarehouseAppController extends Controller
             }
 
             if ($request->serial_number) {
-                // Validar duplicados globales
                 if (Inventory::where('product_id', $product->id)->where('lpn', $request->serial_number)->exists()) {
                     return back()->with('error', "El serial {$request->serial_number} ya existe.");
                 }
             }
-            // ---------------------------
 
-            // 3. Validar cantidades
-            if ($asnItem->received_quantity >= $asnItem->expected_quantity) {
-                // return back()->with('warning', '¡Atención! Cantidad esperada ya completada.');
-            }
-
-            // 4. Actualizar conteo ASN
+            // Actualizar conteo ASN
             $asnItem->increment('received_quantity');
             $asnItem->update(['status' => 'received']);
 
-            // 5. DETERMINAR UBICACIÓN (Recepción vs Cuarentena)
-            $warehouseId = Auth::user()->warehouse_id ?? 8; // Fallback
+            // Ubicación
+            $warehouseId = Auth::user()->warehouse_id ?? 8;
             $locationCode = $request->is_damaged ? 'CUARENTENA' : 'RECEPCION';
             $locationType = $request->is_damaged ? 'quarantine' : 'staging';
 
@@ -153,20 +138,18 @@ class WarehouseAppController extends Controller
                 ['type' => $locationType, 'status' => 'active', 'is_blocked' => $request->is_damaged]
             );
 
-            // 6. CREAR INVENTARIO
+            // Crear Inventario
             if ($request->serial_number) {
-                // Producto Serializado: Línea única con LPN
                 Inventory::create([
                     'product_id' => $product->id,
                     'location_id' => $location->id,
                     'quantity' => 1,
-                    'lpn' => $request->serial_number 
+                    'lpn' => $request->serial_number
                 ]);
             } else {
-                // Producto Normal: Agrupar cantidad
                 $inventory = Inventory::where('product_id', $product->id)
                                       ->where('location_id', $location->id)
-                                      ->whereNull('lpn') 
+                                      ->whereNull('lpn')
                                       ->first();
 
                 if ($inventory) {
@@ -180,7 +163,7 @@ class WarehouseAppController extends Controller
                 }
             }
             
-            // 7. Actualizar Estado Global ASN
+            // Estado ASN
             $asn = ASN::with('items')->find($request->asn_id);
             $allComplete = $asn->items->every(fn($i) => $i->received_quantity >= $i->expected_quantity);
 
@@ -196,13 +179,10 @@ class WarehouseAppController extends Controller
 
         } catch (\Exception $e) {
             DB::rollBack();
-            return back()->with('error', 'Error crítico: ' . $e->getMessage());
+            return back()->with('error', 'Error: ' . $e->getMessage());
         }
     }
 
-    /**
-     * DESHACER ESCANEO: Restar 1 unidad
-     */
     public function receptionUndo(Request $request)
     {
         $request->validate([
@@ -218,15 +198,12 @@ class WarehouseAppController extends Controller
                               ->firstOrFail();
 
             if ($asnItem->received_quantity > 0) {
-                // 1. Restar de la ASN
                 $asnItem->decrement('received_quantity');
 
-                // 2. Restar del Inventario (Busca en RECEPCION por defecto)
                 $warehouseId = Auth::user()->warehouse_id ?? 8;
                 $location = Location::where('code', 'RECEPCION')->where('warehouse_id', $warehouseId)->first();
 
                 if ($location) {
-                    // FIFO simple para restar
                     $inventory = Inventory::where('product_id', $request->product_id)
                                           ->where('location_id', $location->id)
                                           ->whereNull('lpn')
@@ -253,13 +230,10 @@ class WarehouseAppController extends Controller
 
         } catch (\Exception $e) {
             DB::rollBack();
-            return back()->with('error', 'No se pudo corregir: ' . $e->getMessage());
+            return back()->with('error', 'Error: ' . $e->getMessage());
         }
     }
 
-    /**
-     * CIERRE FORZOSO
-     */
     public function receptionFinish(Request $request, $id)
     {
         try {
@@ -281,7 +255,7 @@ class WarehouseAppController extends Controller
     }
 
     // ==========================================
-    // 2. PUT-AWAY (UBICACIÓN) - [NUEVO]
+    // 2. PUT-AWAY (UBICACIÓN)
     // ==========================================
 
     public function putawayIndex()
@@ -290,11 +264,9 @@ class WarehouseAppController extends Controller
         $receptionLoc = Location::where('code', 'RECEPCION')->where('warehouse_id', $warehouseId)->first();
 
         if (!$receptionLoc) {
-            return view('warehouse.putaway.index', ['items' => []])
-                ->withErrors(['error' => 'No se encontró la ubicación RECEPCION.']);
+            return view('warehouse.putaway.index', ['items' => []])->withErrors(['error' => 'No se encontró la ubicación RECEPCION.']);
         }
 
-        // Obtener todo el inventario pendiente en recepción
         $items = Inventory::with('product')
                           ->where('location_id', $receptionLoc->id)
                           ->where('quantity', '>', 0)
@@ -318,10 +290,9 @@ class WarehouseAppController extends Controller
                               ->where('quantity', '>', 0)
                               ->first();
 
-        if (!$inventory) return back()->with('error', 'No hay stock de este producto en RECEPCION.');
+        if (!$inventory) return back()->with('error', 'No hay stock en RECEPCION.');
 
-        // --- INTELIGENCIA DE SUGERENCIA ---
-        // 1. Buscar si ya existe este producto en algún bin (agrupar)
+        // Inteligencia de Sugerencia
         $suggestedLoc = Location::whereHas('inventory', function($q) use ($product) {
                                     $q->where('product_id', $product->id);
                                 })
@@ -329,7 +300,6 @@ class WarehouseAppController extends Controller
                                 ->where('is_blocked', 0)
                                 ->first();
 
-        // 2. Si no, buscar el primer bin vacío
         if (!$suggestedLoc) {
             $suggestedLoc = Location::whereDoesntHave('inventory', function($q) {
                                         $q->where('quantity', '>', 0);
@@ -358,27 +328,23 @@ class WarehouseAppController extends Controller
         try {
             DB::beginTransaction();
 
-            // 1. Validar Ubicación Destino
             $targetLoc = Location::where('code', $request->location_code)->first();
             if (!$targetLoc) throw new \Exception("Ubicación {$request->location_code} no existe.");
-            if ($targetLoc->code === 'RECEPCION') throw new \Exception("No puedes moverlo a RECEPCION de nuevo.");
+            if ($targetLoc->code === 'RECEPCION') throw new \Exception("Destino inválido.");
 
-            // 2. Obtener Inventario Origen
             $sourceInv = Inventory::findOrFail($request->inventory_id);
             
             if ($sourceInv->quantity < $request->quantity) {
-                throw new \Exception("Cantidad insuficiente en Recepción.");
+                throw new \Exception("Cantidad insuficiente.");
             }
 
-            // 3. MOVIMIENTO DE STOCK
-            // Restar
+            // Movimiento
             $sourceInv->decrement('quantity', $request->quantity);
             if ($sourceInv->quantity == 0) $sourceInv->delete();
 
-            // Sumar a Destino
             $destInv = Inventory::where('location_id', $targetLoc->id)
                                 ->where('product_id', $sourceInv->product_id)
-                                ->where('lpn', $sourceInv->lpn) // Coincidir LPN si existe
+                                ->where('lpn', $sourceInv->lpn)
                                 ->first();
 
             if ($destInv) {
@@ -392,8 +358,6 @@ class WarehouseAppController extends Controller
                 ]);
             }
 
-            // 4. Registrar Movimiento (Kardex)
-            // Verificar si existe el modelo StockMovement, si no, crear o usar DB
             if (class_exists(StockMovement::class)) {
                 StockMovement::create([
                     'product_id' => $sourceInv->product_id,
@@ -406,7 +370,7 @@ class WarehouseAppController extends Controller
             }
 
             DB::commit();
-            return redirect()->route('warehouse.putaway.index')->with('success', "Ubicado correctamente en {$targetLoc->code}");
+            return redirect()->route('warehouse.putaway.index')->with('success', "Ubicado en {$targetLoc->code}");
 
         } catch (\Exception $e) {
             DB::rollBack();
@@ -415,25 +379,134 @@ class WarehouseAppController extends Controller
     }
 
     // ==========================================
-    // 3. PICKING
+    // 3. PICKING (RECOLECCIÓN INTELIGENTE)
     // ==========================================
 
     public function pickingIndex()
     {
-        $orders = Order::where('status', 'pending')
-                       ->orWhere('status', 'processing')
-                       ->orderBy('created_at')
+        // El operador ve Órdenes listas (Allocated) o que ya empezó (Processing)
+        $orders = Order::with('client')
+                       ->whereIn('status', ['allocated', 'processing']) 
+                       ->orderBy('created_at', 'asc')
                        ->get();
+
         return view('warehouse.picking.index', compact('orders'));
     }
 
     public function pickingProcess($id)
     {
         $order = Order::with(['items.product', 'client'])->findOrFail($id);
-        if ($order->status === 'pending') {
+
+        if ($order->status === 'allocated') {
             $order->update(['status' => 'processing']);
         }
-        return view('warehouse.picking.process', compact('order'));
+
+        // 1. Buscar el siguiente ítem pendiente de pickear
+        $nextItem = $order->items->where('quantity_picked', '<', 'quantity')->first();
+
+        if (!$nextItem) {
+            return view('warehouse.picking.finished', compact('order'));
+        }
+
+        // 2. BUSCAR LA ASIGNACIÓN ESPECÍFICA (ALLOCATION)
+        // El admin ya decidió de dónde sacar esto. Buscamos esa instrucción.
+        $allocation = OrderAllocation::where('order_item_id', $nextItem->id)
+                        ->where('quantity', '>', 0) // Que todavía tenga saldo por sacar
+                        ->with(['inventory.location', 'inventory.product'])
+                        ->first();
+
+        // Si no hay allocation (error de datos), intentamos fallback o error
+        if (!$allocation) {
+             return back()->with('error', 'Error crítico: Este ítem no tiene ubicación asignada. Contacte al supervisor.');
+        }
+
+        $suggestedLoc = $allocation->inventory->location;
+
+        return view('warehouse.picking.process', compact('order', 'nextItem', 'suggestedLoc', 'allocation'));
+    }
+
+    public function pickingScanLocation(Request $request)
+    {
+        $request->validate([
+            'order_id' => 'required',
+            'suggested_location_id' => 'required',
+            'location_code' => 'required'
+        ]);
+
+        $targetLoc = Location::find($request->suggested_location_id);
+
+        if (!$targetLoc || strtoupper($request->location_code) !== strtoupper($targetLoc->code)) {
+            return back()->with('error', 'Ubicación incorrecta.');
+        }
+
+        session()->flash('location_verified', true);
+        return back()->with('success', 'Ubicación confirmada.');
+    }
+
+    public function pickingScanItem(Request $request)
+    {
+        $request->validate([
+            'order_id' => 'required',
+            'item_id' => 'required',
+            'allocation_id' => 'required',
+            'barcode' => 'required',
+            'qty_to_pick' => 'required|integer|min:1'
+        ]);
+
+        try {
+            DB::beginTransaction();
+
+            // Cargar Allocation
+            $allocation = OrderAllocation::findOrFail($request->allocation_id);
+            $inventory = Inventory::findOrFail($allocation->inventory_id);
+            $orderItem = OrderItem::findOrFail($request->item_id);
+            $product = Product::findOrFail($orderItem->product_id);
+
+            // Validar Producto (Barcode)
+            if ($product->sku !== $request->barcode && $product->upc !== $request->barcode) {
+                session()->flash('location_verified', true); // Mantener el check de ubicación
+                return back()->with('error', 'Producto incorrecto.');
+            }
+
+            // EJECUTAR MOVIMIENTO REAL
+            $qty = $request->qty_to_pick;
+            
+            // 1. Restar del inventario físico
+            if ($inventory->quantity < $qty) {
+                throw new \Exception("Discrepancia de Stock: El sistema esperaba $qty pero no están en el bin.");
+            }
+            
+            $inventory->decrement('quantity', $qty);
+            if ($inventory->quantity == 0) $inventory->delete();
+
+            // 2. Consumir la Allocation
+            $allocation->decrement('quantity', $qty);
+            if ($allocation->quantity == 0) $allocation->delete();
+
+            // 3. Sumar al progreso del Picking
+            $orderItem->increment('quantity_picked', $qty);
+
+            DB::commit();
+            return redirect()->route('warehouse.picking.process', $request->order_id)
+                             ->with('success', 'Ítem recolectado.');
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return back()->with('error', $e->getMessage());
+        }
+    }
+
+    public function pickingComplete($id)
+    {
+        $order = Order::findOrFail($id);
+        
+        // Validar que todo esté pickeado
+        $pending = $order->items->where('quantity_picked', '<', 'quantity')->count();
+        if ($pending > 0) return back()->with('error', 'Faltan productos.');
+
+        $order->update(['status' => 'picked']); 
+
+        return redirect()->route('warehouse.picking.index')->with('success', "Orden #{$order->order_number} lista para Packing.");
     }
 
     // ==========================================

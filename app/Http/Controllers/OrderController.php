@@ -10,10 +10,12 @@ use App\Models\Branch;
 use App\Models\Inventory;
 use App\Models\Country;
 use App\Models\ShippingMethod;
+use App\Models\State;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use App\Services\BinAllocator;
 
 class OrderController extends Controller
@@ -34,7 +36,6 @@ class OrderController extends Controller
         }
 
         $orders = $query->paginate(15);
-        // Vista correcta: admin.operations.orders.index
         return view('admin.operations.orders.index', compact('orders'));
     }
 
@@ -54,7 +55,7 @@ class OrderController extends Controller
             }
         }
 
-        // 2. Productos
+        // 2. Productos (Solo con stock físico disponible)
         try {
             $productIdsWithStock = Inventory::where('quantity', '>', 0)
                 ->pluck('product_id')
@@ -84,6 +85,7 @@ class OrderController extends Controller
     public function getClientProducts($clientId)
     {
         try {
+            // Filtrar productos que tengan inventario
             $productIds = Inventory::where('quantity', '>', 0)
                 ->pluck('product_id')
                 ->unique();
@@ -93,7 +95,14 @@ class OrderController extends Controller
                 ->select('id', 'sku', 'name')
                 ->get()
                 ->map(function($product) {
-                    $product->stock_available = Inventory::where('product_id', $product->id)->sum('quantity');
+                    // Calcular disponible REAL (Físico - Comprometido)
+                    $physical = Inventory::where('product_id', $product->id)->sum('quantity');
+                    
+                    $committed = OrderItem::whereHas('order', function($q) {
+                        $q->whereIn('status', ['pending', 'allocated', 'processing']);
+                    })->where('product_id', $product->id)->sum('quantity');
+
+                    $product->stock_available = max(0, $physical - $committed);
                     return $product;
                 });
 
@@ -119,6 +128,7 @@ class OrderController extends Controller
         try {
             DB::beginTransaction();
 
+            // 1. Asignar Sucursal (Lógica de Cobertura)
             $activeBranches = Branch::where('is_active', true)->get();
             $assignedBranch = null;
             
@@ -137,13 +147,14 @@ class OrderController extends Controller
                 if (!$assignedBranch) throw new \Exception("No hay sucursales activas.");
             }
 
+            // 2. Crear Cabecera de Orden
             $orderNumber = $request->order_number ?? ('ORD-' . date('Ymd') . '-' . strtoupper(substr(uniqid(), -5)));
 
             $order = new Order();
             $order->order_number = $orderNumber;
             $order->client_id = $request->client_id;
             $order->branch_id = $assignedBranch->id;
-            $order->status = 'pending';
+            $order->status = 'pending'; // Inicia Reserva Lógica
             
             $order->customer_name = $request->customer_name;
             $order->customer_id_number = $request->customer_id_number ?? 'N/A';
@@ -161,28 +172,36 @@ class OrderController extends Controller
             
             $order->save();
 
+            // 3. Procesar Ítems y Validar Stock (Reserva Lógica)
             foreach ($request->items as $itemData) {
                 if(empty($itemData['product_id'])) continue;
 
-                $product = Product::find($itemData['product_id']);
+                $product = Product::findOrFail($itemData['product_id']);
                 
-                $currentStock = Inventory::where('product_id', $product->id)->sum('quantity');
+                // A. Stock Físico
+                $physicalStock = Inventory::where('product_id', $product->id)->sum('quantity');
+
+                // B. Stock Comprometido (En otras órdenes activas)
+                $committedStock = OrderItem::whereHas('order', function($q) {
+                    $q->whereIn('status', ['pending', 'allocated', 'processing']);
+                })->where('product_id', $product->id)->sum('quantity');
+
+                $availableToSell = $physicalStock - $committedStock;
                 
-                if ($currentStock < $itemData['qty']) {
-                    throw new \Exception("Stock insuficiente para: {$product->sku}");
+                if ($availableToSell < $itemData['qty']) {
+                    throw new \Exception("Stock insuficiente para: {$product->sku}. Disponible real: {$availableToSell}");
                 }
 
                 OrderItem::create([
                     'order_id' => $order->id,
                     'product_id' => $product->id,
-                    'requested_quantity' => $itemData['qty'],
-                    'allocated_quantity' => 0
+                    'quantity' => $itemData['qty'], // Esto aumenta el "committedStock" para la próxima orden
+                    'quantity_picked' => 0
                 ]);
             }
 
             DB::commit();
 
-            // CORRECCIÓN AQUÍ: Ruta correcta 'admin.orders.index'
             return redirect()->route('admin.orders.index')
                 ->with('success', "Pedido {$order->order_number} creado exitosamente.");
 
@@ -195,7 +214,8 @@ class OrderController extends Controller
 
     public function show($id)
     {
-        $order = Order::with(['client', 'items.product', 'branch', 'allocations.bin.warehouse'])->findOrFail($id);
+        // Cargar relaciones profundas incluyendo las asignaciones de bines
+        $order = Order::with(['client', 'items.product', 'branch', 'allocations.inventory.location'])->findOrFail($id);
         
         $user = Auth::user();
         if (!empty($user->client_id) && $order->client_id !== $user->client_id) {
@@ -223,7 +243,7 @@ class OrderController extends Controller
             $clients = Client::where('is_active', true)->get();
         }
         
-        // Productos
+        // Productos del cliente
         $products = Product::where('client_id', $order->client_id)->get();
         $countries = Country::orderBy('name')->get();
         $shippingMethods = ShippingMethod::where('is_active', true)->get();
@@ -239,7 +259,6 @@ class OrderController extends Controller
             return back()->with('error', 'No se puede modificar un pedido que ya está en proceso.');
         }
 
-        // Ajustar validación según tus campos de edición
         $request->validate([
             'shipping_address' => 'required|string|max:255',
         ]);
@@ -247,13 +266,13 @@ class OrderController extends Controller
         try {
             DB::beginTransaction();
 
-            // Actualiza los campos que permitas editar
             $order->shipping_address = $request->shipping_address;
             $order->notes = $request->notes;
+            // Aquí podrías agregar lógica para actualizar ítems si fuera necesario (recalculando reserva)
+            
             $order->save();
 
             DB::commit();
-            // CORRECCIÓN AQUÍ: Ruta correcta 'admin.orders.index'
             return redirect()->route('admin.orders.index')->with('success', 'Pedido actualizado.');
 
         } catch (\Exception $e) {
@@ -265,26 +284,37 @@ class OrderController extends Controller
     public function destroy($id)
     {
         $order = Order::findOrFail($id);
+        
+        // Solo permitir eliminar si no ha iniciado proceso en bodega
         if (!in_array($order->status, ['pending', 'draft', 'cancelled'])) {
-            return back()->with('error', 'No se puede eliminar un pedido activo.');
+            return back()->with('error', 'No se puede eliminar un pedido activo en bodega.');
         }
+        
+        // Al eliminar, se libera automáticamente la "Reserva Lógica" al borrarse los OrderItems
         $order->delete();
-        // CORRECCIÓN AQUÍ: Ruta correcta 'admin.orders.index'
-        return redirect()->route('admin.orders.index')->with('success', 'Pedido eliminado.');
+        
+        return redirect()->route('admin.orders.index')->with('success', 'Pedido eliminado y stock liberado.');
     }
-    public function cancel($id, BinAllocator $allocator)
+
+    public function cancel($id)
     {
         $order = Order::findOrFail($id);
 
-        if ($order->status === 'shipped' || $order->status === 'delivered') {
+        if (in_array($order->status, ['shipped', 'delivered'])) {
             return back()->with('error', 'No se puede anular un pedido ya despachado.');
         }
 
         try {
             DB::beginTransaction();
             
-            // Usamos el servicio para devolver el stock
-            $allocator->deallocateOrder($order);
+            // Si estaba "Allocated", hay que liberar la reserva física de los bines
+            if ($order->status === 'allocated' || $order->status === 'processing') {
+                // Usamos el modelo OrderAllocation para borrar las reservas
+                \App\Models\OrderAllocation::where('order_id', $order->id)->delete();
+            }
+            
+            // Cambiar estado a Cancelado
+            $order->update(['status' => 'cancelled']);
             
             DB::commit();
             return back()->with('success', 'Pedido anulado y stock liberado correctamente.');
@@ -295,6 +325,7 @@ class OrderController extends Controller
             return back()->with('error', 'Error al anular: ' . $e->getMessage());
         }
     }
+
     public function updateStatus(Request $request, $id)
     {
         $order = Order::findOrFail($id);
@@ -309,20 +340,20 @@ class OrderController extends Controller
     }
 
     public function printPickingList($id) {
-        $order = Order::with(['items.product', 'allocations.bin'])->findOrFail($id);
+        $order = Order::with(['items.product', 'allocations.inventory.location'])->findOrFail($id);
         return view('admin.operations.orders.picking_list', compact('order'));
     }
 
     public function getStatesByCountry($countryId)
     {
         try {
-            $states = \App\Models\State::where('country_id', $countryId)
+            $states = State::where('country_id', $countryId)
                 ->orderBy('name')
                 ->get();
 
             return response()->json($states);
         } catch (\Exception $e) {
-            \Illuminate\Support\Facades\Log::error('Error cargando estados: ' . $e->getMessage());
+            Log::error('Error cargando estados: ' . $e->getMessage());
             return response()->json(['error' => 'Error interno al cargar estados'], 500);
         }
     }

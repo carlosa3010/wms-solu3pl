@@ -336,6 +336,11 @@ Route::middleware(['auth'])->group(function () {
         // 3. Picking
         Route::get('/picking', [WarehouseAppController::class, 'pickingIndex'])->name('picking.index');
         Route::get('/picking/{id}', [WarehouseAppController::class, 'pickingProcess'])->name('picking.process');
+        
+        // --- RUTAS NUEVAS PARA PICKING ---
+        Route::post('/picking/scan-location', [WarehouseAppController::class, 'pickingScanLocation'])->name('picking.scan_location');
+        Route::post('/picking/scan-item', [WarehouseAppController::class, 'pickingScanItem'])->name('picking.scan_item');
+        Route::post('/picking/{id}/complete', [WarehouseAppController::class, 'pickingComplete'])->name('picking.complete');
 
         // 4. Packing
         Route::get('/packing', [WarehouseAppController::class, 'packingIndex'])->name('packing.index');
