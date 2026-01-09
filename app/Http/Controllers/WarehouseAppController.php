@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Str;
 use App\Models\Order;
 use App\Models\PackageType;
 use App\Models\ASN;
@@ -13,6 +14,7 @@ use App\Models\RMA;
 use App\Models\Product;
 use App\Models\Location;
 use App\Models\Inventory;
+use App\Models\StockMovement; // Asegúrate de tener este modelo importado
 
 class WarehouseAppController extends Controller
 {
@@ -132,7 +134,7 @@ class WarehouseAppController extends Controller
             }
             // ---------------------------
 
-            // 3. Validar cantidades (Opcional: permitir exceso con warning)
+            // 3. Validar cantidades
             if ($asnItem->received_quantity >= $asnItem->expected_quantity) {
                 // return back()->with('warning', '¡Atención! Cantidad esperada ya completada.');
             }
@@ -164,7 +166,7 @@ class WarehouseAppController extends Controller
                 // Producto Normal: Agrupar cantidad
                 $inventory = Inventory::where('product_id', $product->id)
                                       ->where('location_id', $location->id)
-                                      ->whereNull('lpn') // No mezclar con los que tienen serial
+                                      ->whereNull('lpn') 
                                       ->first();
 
                 if ($inventory) {
@@ -224,13 +226,12 @@ class WarehouseAppController extends Controller
                 $location = Location::where('code', 'RECEPCION')->where('warehouse_id', $warehouseId)->first();
 
                 if ($location) {
-                    // Intenta borrar primero uno sin serial (FIFO simple)
+                    // FIFO simple para restar
                     $inventory = Inventory::where('product_id', $request->product_id)
                                           ->where('location_id', $location->id)
                                           ->whereNull('lpn')
                                           ->first();
                     
-                    // Si no hay sin serial, busca cualquiera (esto es riesgoso con seriales, idealmente se pide escanear qué serial borrar)
                     if(!$inventory) {
                          $inventory = Inventory::where('product_id', $request->product_id)
                                           ->where('location_id', $location->id)
@@ -273,9 +274,6 @@ class WarehouseAppController extends Controller
         }
     }
 
-    /**
-     * Genera la vista de etiqueta
-     */
     public function printProductLabel($id)
     {
         $product = Product::findOrFail($id);
@@ -283,7 +281,141 @@ class WarehouseAppController extends Controller
     }
 
     // ==========================================
-    // 2. PICKING
+    // 2. PUT-AWAY (UBICACIÓN) - [NUEVO]
+    // ==========================================
+
+    public function putawayIndex()
+    {
+        $warehouseId = Auth::user()->warehouse_id ?? 8;
+        $receptionLoc = Location::where('code', 'RECEPCION')->where('warehouse_id', $warehouseId)->first();
+
+        if (!$receptionLoc) {
+            return view('warehouse.putaway.index', ['items' => []])
+                ->withErrors(['error' => 'No se encontró la ubicación RECEPCION.']);
+        }
+
+        // Obtener todo el inventario pendiente en recepción
+        $items = Inventory::with('product')
+                          ->where('location_id', $receptionLoc->id)
+                          ->where('quantity', '>', 0)
+                          ->get();
+
+        return view('warehouse.putaway.index', compact('items'));
+    }
+
+    public function putawayScan(Request $request)
+    {
+        $request->validate(['barcode' => 'required']);
+
+        $product = Product::where('sku', $request->barcode)->first();
+        if (!$product) return back()->with('error', 'Producto no encontrado.');
+
+        $warehouseId = Auth::user()->warehouse_id ?? 8;
+        $receptionLoc = Location::where('code', 'RECEPCION')->where('warehouse_id', $warehouseId)->first();
+        
+        $inventory = Inventory::where('location_id', $receptionLoc->id)
+                              ->where('product_id', $product->id)
+                              ->where('quantity', '>', 0)
+                              ->first();
+
+        if (!$inventory) return back()->with('error', 'No hay stock de este producto en RECEPCION.');
+
+        // --- INTELIGENCIA DE SUGERENCIA ---
+        // 1. Buscar si ya existe este producto en algún bin (agrupar)
+        $suggestedLoc = Location::whereHas('inventory', function($q) use ($product) {
+                                    $q->where('product_id', $product->id);
+                                })
+                                ->where('code', '!=', 'RECEPCION')
+                                ->where('is_blocked', 0)
+                                ->first();
+
+        // 2. Si no, buscar el primer bin vacío
+        if (!$suggestedLoc) {
+            $suggestedLoc = Location::whereDoesntHave('inventory', function($q) {
+                                        $q->where('quantity', '>', 0);
+                                    })
+                                    ->where('type', 'storage')
+                                    ->where('is_blocked', 0)
+                                    ->orderBy('aisle')->orderBy('level')
+                                    ->first();
+        }
+
+        return view('warehouse.putaway.process', [
+            'product' => $product,
+            'inventory' => $inventory,
+            'suggestedLoc' => $suggestedLoc
+        ]);
+    }
+
+    public function putawayConfirm(Request $request)
+    {
+        $request->validate([
+            'inventory_id' => 'required|exists:inventory,id',
+            'location_code' => 'required|string',
+            'quantity' => 'required|integer|min:1'
+        ]);
+
+        try {
+            DB::beginTransaction();
+
+            // 1. Validar Ubicación Destino
+            $targetLoc = Location::where('code', $request->location_code)->first();
+            if (!$targetLoc) throw new \Exception("Ubicación {$request->location_code} no existe.");
+            if ($targetLoc->code === 'RECEPCION') throw new \Exception("No puedes moverlo a RECEPCION de nuevo.");
+
+            // 2. Obtener Inventario Origen
+            $sourceInv = Inventory::findOrFail($request->inventory_id);
+            
+            if ($sourceInv->quantity < $request->quantity) {
+                throw new \Exception("Cantidad insuficiente en Recepción.");
+            }
+
+            // 3. MOVIMIENTO DE STOCK
+            // Restar
+            $sourceInv->decrement('quantity', $request->quantity);
+            if ($sourceInv->quantity == 0) $sourceInv->delete();
+
+            // Sumar a Destino
+            $destInv = Inventory::where('location_id', $targetLoc->id)
+                                ->where('product_id', $sourceInv->product_id)
+                                ->where('lpn', $sourceInv->lpn) // Coincidir LPN si existe
+                                ->first();
+
+            if ($destInv) {
+                $destInv->increment('quantity', $request->quantity);
+            } else {
+                Inventory::create([
+                    'location_id' => $targetLoc->id,
+                    'product_id' => $sourceInv->product_id,
+                    'quantity' => $request->quantity,
+                    'lpn' => $sourceInv->lpn
+                ]);
+            }
+
+            // 4. Registrar Movimiento (Kardex)
+            // Verificar si existe el modelo StockMovement, si no, crear o usar DB
+            if (class_exists(StockMovement::class)) {
+                StockMovement::create([
+                    'product_id' => $sourceInv->product_id,
+                    'from_location_id' => $sourceInv->location_id,
+                    'to_location_id' => $targetLoc->id,
+                    'quantity' => $request->quantity,
+                    'reason' => 'Put-away',
+                    'user_id' => Auth::id()
+                ]);
+            }
+
+            DB::commit();
+            return redirect()->route('warehouse.putaway.index')->with('success', "Ubicado correctamente en {$targetLoc->code}");
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return back()->with('error', $e->getMessage());
+        }
+    }
+
+    // ==========================================
+    // 3. PICKING
     // ==========================================
 
     public function pickingIndex()
@@ -305,7 +437,7 @@ class WarehouseAppController extends Controller
     }
 
     // ==========================================
-    // 3. PACKING
+    // 4. PACKING
     // ==========================================
 
     public function packingIndex()
@@ -351,7 +483,7 @@ class WarehouseAppController extends Controller
     }
 
     // ==========================================
-    // 4. SHIPPING
+    // 5. SHIPPING
     // ==========================================
 
     public function shippingIndex()
@@ -372,7 +504,7 @@ class WarehouseAppController extends Controller
     }
 
     // ==========================================
-    // 5. INVENTARIO & RMA
+    // 6. INVENTARIO & RMA
     // ==========================================
 
     public function inventoryIndex()

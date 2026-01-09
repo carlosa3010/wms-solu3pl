@@ -321,32 +321,35 @@ Route::middleware(['auth'])->group(function () {
 
         // 1. Recepción (Inbound)
         Route::get('/reception', [WarehouseAppController::class, 'receptionIndex'])->name('reception.index');
-        Route::get('/reception/{id}', [WarehouseAppController::class, 'receptionShow'])->name('reception.show'); // <--- VER ASN
+        Route::get('/reception/{id}', [WarehouseAppController::class, 'receptionShow'])->name('reception.show'); 
         Route::post('/reception/scan', [WarehouseAppController::class, 'receptionScan'])->name('reception.scan');
         Route::post('/reception/undo', [WarehouseAppController::class, 'receptionUndo'])->name('reception.undo'); 
         Route::post('/reception/{id}/finish', [WarehouseAppController::class, 'receptionFinish'])->name('reception.finish');
         Route::get('/reception/product/{id}/label', [WarehouseAppController::class, 'printProductLabel'])->name('reception.label');
-        
-        // --- RUTA NUEVA: CHECK-IN DE BULTOS ---
         Route::post('/reception/{id}/checkin', [WarehouseAppController::class, 'receptionCheckin'])->name('reception.checkin');
 
-        // 2. Picking
+        // 2. PUT-AWAY (NUEVO)
+        Route::get('/putaway', [WarehouseAppController::class, 'putawayIndex'])->name('putaway.index');
+        Route::post('/putaway/scan', [WarehouseAppController::class, 'putawayScan'])->name('putaway.scan'); 
+        Route::post('/putaway/confirm', [WarehouseAppController::class, 'putawayConfirm'])->name('putaway.confirm'); 
+
+        // 3. Picking
         Route::get('/picking', [WarehouseAppController::class, 'pickingIndex'])->name('picking.index');
         Route::get('/picking/{id}', [WarehouseAppController::class, 'pickingProcess'])->name('picking.process');
 
-        // 3. Packing
+        // 4. Packing
         Route::get('/packing', [WarehouseAppController::class, 'packingIndex'])->name('packing.index');
         Route::get('/packing/{order}', [WarehouseAppController::class, 'packingProcess'])->name('packing.process');
         Route::post('/packing/{order}/close', [WarehouseAppController::class, 'packingClose'])->name('packing.close');
 
-        // 4. Shipping / Despacho
+        // 5. Shipping / Despacho
         Route::get('/shipping', [WarehouseAppController::class, 'shippingIndex'])->name('shipping.index');
         Route::post('/shipping/manifest', [WarehouseAppController::class, 'shippingManifest'])->name('shipping.manifest');
 
-        // 5. Inventario
+        // 6. Inventario
         Route::get('/inventory', [WarehouseAppController::class, 'inventoryIndex'])->name('inventory.index');
         
-        // 6. Devoluciones (RMA)
+        // 7. Devoluciones (RMA)
         Route::get('/rma', [WarehouseAppController::class, 'rmaIndex'])->name('rma.index');
         Route::get('/rma/{id}', [WarehouseAppController::class, 'rmaProcess'])->name('rma.process');
     });

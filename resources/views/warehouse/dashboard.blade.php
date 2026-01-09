@@ -15,6 +15,14 @@
             <p class="text-xs text-slate-400 mt-1">Ingreso (ASN)</p>
         </a>
 
+        <a href="{{ route('warehouse.putaway.index') }}" class="group bg-slate-800 border border-slate-700 hover:border-yellow-500 rounded-2xl p-6 flex flex-col items-center justify-center transition-all hover:bg-slate-750 shadow-lg">
+            <div class="w-16 h-16 rounded-full bg-yellow-500/10 flex items-center justify-center mb-4 group-hover:bg-yellow-500 group-hover:text-white transition text-yellow-400">
+                <i class="fa-solid fa-dolly text-3xl"></i>
+            </div>
+            <h2 class="text-lg font-bold text-white">PUT-AWAY</h2>
+            <p class="text-xs text-slate-400 mt-1">Ubicación en Estante</p>
+        </a>
+
         <a href="{{ route('warehouse.picking.index') }}" class="group bg-slate-800 border border-slate-700 hover:border-orange-500 rounded-2xl p-6 flex flex-col items-center justify-center transition-all hover:bg-slate-750 shadow-lg">
             <div class="w-16 h-16 rounded-full bg-orange-500/10 flex items-center justify-center mb-4 group-hover:bg-orange-500 group-hover:text-white transition text-orange-400">
                 <i class="fa-solid fa-cart-flatbed text-3xl"></i>
@@ -47,7 +55,7 @@
             <p class="text-xs text-slate-400 mt-1">Movimientos & Conteo</p>
         </a>
 
-        <a href="{{ route('warehouse.rma.index') }}" class="group bg-slate-800 border border-slate-700 hover:border-red-500 rounded-2xl p-6 flex flex-col items-center justify-center transition-all hover:bg-slate-750 shadow-lg">
+        <a href="{{ route('warehouse.rma.index') }}" class="group bg-slate-800 border border-slate-700 hover:border-red-500 rounded-2xl p-6 flex flex-col items-center justify-center transition-all hover:bg-slate-750 shadow-lg md:col-start-2">
             <div class="w-16 h-16 rounded-full bg-red-500/10 flex items-center justify-center mb-4 group-hover:bg-red-500 group-hover:text-white transition text-red-400">
                 <i class="fa-solid fa-rotate-left text-3xl"></i>
             </div>
@@ -55,7 +63,7 @@
             <p class="text-xs text-slate-400 mt-1">Revisión RMA</p>
         </a>
 
-        <div class="md:col-span-3 mt-4">
+        <div class="col-span-2 md:col-span-3 mt-4">
             <form action="{{ route('warehouse.lookup') }}" method="GET" class="relative">
                 <input type="text" name="q" placeholder="Escanea Ubicación, SKU o LPN para consultar..." autofocus
                     class="w-full bg-slate-900 border-2 border-slate-600 text-white rounded-xl py-4 pl-12 pr-4 focus:border-white focus:ring-0 outline-none shadow-xl text-lg font-mono placeholder-slate-500 transition">
