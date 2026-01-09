@@ -5,25 +5,22 @@
 
 @section('content')
 
-    <!-- Filtros y Búsqueda -->
     <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 mb-6">
         <form action="{{ route('admin.inventory.stock') }}" method="GET" class="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
             
-            <!-- Buscador General -->
             <div class="md:col-span-2">
                 <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Búsqueda Rápida</label>
                 <div class="relative">
                     <span class="absolute left-3 top-2.5 text-slate-400"><i class="fa-solid fa-magnifying-glass"></i></span>
                     <input type="text" name="search" value="{{ request('search') }}" 
                            class="w-full pl-9 pr-4 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 ring-custom-primary outline-none transition" 
-                           placeholder="Buscar por SKU, Producto, LPN o Ubicación...">
+                           placeholder="Buscar por SKU, Nombre de Producto...">
                 </div>
             </div>
 
-            <!-- Filtro Cliente -->
             <div>
                 <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Cliente</label>
-                <select name="client_id" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm outline-none focus:border-custom-primary bg-white">
+                <select name="client_id" onchange="this.form.submit()" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm outline-none focus:border-custom-primary bg-white">
                     <option value="">Todos los Clientes</option>
                     @foreach($clients as $client)
                         <option value="{{ $client->id }}" {{ request('client_id') == $client->id ? 'selected' : '' }}>
@@ -33,10 +30,9 @@
                 </select>
             </div>
 
-            <!-- Botones -->
             <div class="flex gap-2">
                 <button type="submit" class="bg-custom-primary text-white px-4 py-2 rounded-lg font-bold text-sm hover:brightness-95 transition flex-1">
-                    Filtrar
+                    <i class="fa-solid fa-filter mr-2"></i> Filtrar
                 </button>
                 <a href="{{ route('admin.inventory.stock') }}" class="bg-slate-100 text-slate-500 px-3 py-2 rounded-lg hover:bg-slate-200 transition text-center" title="Limpiar Filtros">
                     <i class="fa-solid fa-filter-circle-xmark"></i>
@@ -45,123 +41,142 @@
         </form>
     </div>
 
-    <!-- Tabla de Inventario -->
     <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
         <div class="overflow-x-auto">
             <table class="w-full text-left text-sm whitespace-nowrap">
                 <thead class="bg-slate-50 text-slate-500 font-bold text-[10px] uppercase border-b border-slate-100">
                     <tr>
-                        <th class="px-6 py-4">Producto (SKU)</th>
-                        <th class="px-6 py-4">Ubicación (Bin)</th>
-                        <th class="px-6 py-4">LPN / Lote</th>
-                        <th class="px-6 py-4 text-center">Físico</th>
-                        <th class="px-6 py-4 text-center">Por Recibir (ASN)</th>
-                        <th class="px-6 py-4 text-center">Estado</th>
-                        <th class="px-6 py-4 text-right">Acciones</th>
+                        <th class="px-6 py-4">Producto</th>
+                        <th class="px-6 py-4 text-center text-slate-400" title="Total en Estantería">Físico</th>
+                        <th class="px-6 py-4 text-center text-orange-400" title="Comprometido en Órdenes">Reservado</th>
+                        <th class="px-6 py-4 text-center text-green-600" title="Libre para Venta">Disponible</th>
+                        <th class="px-6 py-4 text-right">Detalle</th>
                     </tr>
                 </thead>
                 <tbody class="divide-y divide-slate-100">
-                    @forelse($inventory as $item)
-                        <tr class="hover:bg-slate-50/80 transition group">
-                            <!-- Producto -->
+                    @forelse($inventory as $item) 
+                        {{-- 
+                           NOTA: $item aquí representa una línea de 'Inventory' (un bin específico), 
+                           pero para el reporte consolidado idealmente deberíamos iterar sobre 'Product'.
+                           Si el controlador envía Inventory, agrupamos visualmente.
+                           
+                           Para este diseño "Amazon Style", asumiremos que $inventory es una colección de Productos 
+                           (si cambiaste el controlador como sugerí). Si no, el código se adapta abajo.
+                        --}}
+                        
+                        @php
+                            // Si $item es Inventory, accedemos al producto. Si es Product, es directo.
+                            $product = $item instanceof \App\Models\Product ? $item : $item->product;
+                            
+                            // Cálculos usando los nuevos accessors del modelo
+                            $fisico = $product->physical_stock;
+                            $reservado = $product->committed_stock;
+                            $disponible = $product->available_stock;
+                        @endphp
+
+                        <tr class="hover:bg-slate-50 transition group">
                             <td class="px-6 py-4">
                                 <div class="flex items-center gap-3">
-                                    <div class="w-10 h-10 rounded bg-slate-100 flex items-center justify-center text-slate-300 overflow-hidden border border-slate-200">
-                                        @if($item->product->image_url)
-                                            <img src="{{ $item->product->image_url }}" class="w-full h-full object-cover">
+                                    <div class="w-10 h-10 rounded bg-slate-100 flex items-center justify-center text-slate-300 border border-slate-200">
+                                        @if($product->image_path)
+                                            <img src="{{ asset('storage/' . $product->image_path) }}" class="w-full h-full object-cover rounded">
                                         @else
                                             <i class="fa-solid fa-box"></i>
                                         @endif
                                     </div>
                                     <div>
-                                        <p class="font-bold text-slate-700 group-hover:text-custom-primary transition">{{ $item->product->name }}</p>
-                                        <p class="text-[10px] text-slate-400 font-mono font-bold">{{ $item->product->sku }}</p>
-                                        <p class="text-[9px] text-slate-400 italic">{{ $item->product->client->company_name }}</p>
+                                        <p class="font-bold text-slate-700">{{ Str::limit($product->name, 40) }}</p>
+                                        <div class="flex items-center gap-2">
+                                            <span class="text-[10px] bg-slate-100 px-1.5 py-0.5 rounded text-slate-500 font-mono border border-slate-200">
+                                                {{ $product->sku }}
+                                            </span>
+                                            <span class="text-[9px] text-slate-400 italic">
+                                                {{ $product->client->company_name }}
+                                            </span>
+                                        </div>
                                     </div>
                                 </div>
                             </td>
 
-                            <!-- Ubicación -->
-                            <td class="px-6 py-4">
-                                <div class="flex flex-col">
-                                    <span class="font-mono font-bold text-slate-600 bg-slate-100 px-2 py-0.5 rounded w-fit text-xs border border-slate-200">
-                                        {{ $item->location->code }}
-                                    </span>
-                                    <span class="text-[10px] text-slate-400 mt-1">
-                                        {{ $item->location->warehouse->name }}
-                                    </span>
-                                </div>
-                            </td>
-
-                            <!-- LPN -->
-                            <td class="px-6 py-4">
-                                @if($item->lpn)
-                                    <span class="font-mono text-xs text-slate-600 font-bold"><i class="fa-solid fa-barcode mr-1 text-slate-300"></i>{{ $item->lpn }}</span>
-                                @else
-                                    <span class="text-[10px] text-slate-300 italic uppercase">Sin LPN</span>
-                                @endif
-                            </td>
-
-                            <!-- Cantidad Física -->
                             <td class="px-6 py-4 text-center">
-                                <span class="text-lg font-black text-slate-800">{{ $item->quantity }}</span>
-                                <span class="text-[9px] text-slate-400 uppercase block font-bold">Unidades</span>
-                            </td>
-
-                            <!-- Cantidad en Tránsito (ASN) -->
-                            <td class="px-6 py-4 text-center">
-                                @php
-                                    // Esta lógica es ilustrativa. En el controlador deberías sumar 
-                                    // las cantidades de asn_items pendientes para este producto y ubicación.
-                                    $inTransit = 0; 
-                                @endphp
-                                <span class="text-sm font-bold {{ $inTransit > 0 ? 'text-blue-600' : 'text-slate-300' }}">
-                                    {{ $inTransit > 0 ? '+' . $inTransit : '--' }}
+                                <span class="bg-slate-100 text-slate-600 px-3 py-1 rounded-lg font-bold border border-slate-200">
+                                    {{ $fisico }}
                                 </span>
-                                @if($inTransit > 0)
-                                    <span class="text-[9px] text-blue-400 uppercase block font-bold">En Camino</span>
-                                @endif
                             </td>
 
-                            <!-- Estado -->
                             <td class="px-6 py-4 text-center">
-                                @if($item->quantity > 0)
-                                    <span class="bg-green-100 text-green-700 px-2 py-1 rounded-full text-[9px] font-bold border border-green-200 uppercase tracking-tighter shadow-sm">
-                                        En Stock
+                                @if($reservado > 0)
+                                    <span class="bg-orange-50 text-orange-600 px-3 py-1 rounded-lg font-bold border border-orange-200 cursor-help" title="Pendiente de Picking">
+                                        {{ $reservado }}
                                     </span>
                                 @else
-                                    <span class="bg-red-100 text-red-700 px-2 py-1 rounded-full text-[9px] font-bold border border-red-200 uppercase tracking-tighter shadow-sm">
-                                        Agotado
+                                    <span class="text-slate-300">-</span>
+                                @endif
+                            </td>
+
+                            <td class="px-6 py-4 text-center">
+                                @if($disponible > 0)
+                                    <span class="bg-emerald-100 text-emerald-700 px-3 py-1 rounded-lg font-bold border border-emerald-200 text-lg shadow-sm">
+                                        {{ $disponible }}
+                                    </span>
+                                @else
+                                    <span class="bg-red-50 text-red-600 px-3 py-1 rounded-lg font-bold border border-red-100 text-xs">
+                                        AGOTADO
                                     </span>
                                 @endif
                             </td>
 
-                            <!-- Acciones -->
                             <td class="px-6 py-4 text-right">
-                                <div class="flex justify-end gap-1">
-                                    <a href="{{ route('admin.inventory.movements', ['sku' => $item->product->sku]) }}" 
-                                       class="text-slate-400 hover:text-custom-primary transition p-2 hover:bg-slate-100 rounded-lg" 
-                                       title="Ver Historial (Kardex)">
-                                        <i class="fa-solid fa-clock-rotate-left"></i>
-                                    </a>
-                                    
-                                    <a href="{{ route('admin.inventory.adjustments', ['product_id' => $item->product_id, 'location_code' => $item->location->code]) }}" 
-                                       class="text-slate-400 hover:text-amber-600 transition p-2 hover:bg-amber-50 rounded-lg" 
-                                       title="Realizar Ajuste Manual">
-                                        <i class="fa-solid fa-scale-balanced"></i>
-                                    </a>
+                                <button onclick="document.getElementById('details-{{ $product->id }}').classList.toggle('hidden')" 
+                                        class="text-slate-400 hover:text-custom-primary transition p-2 hover:bg-slate-100 rounded-lg">
+                                    <i class="fa-solid fa-chevron-down"></i>
+                                </button>
+                            </td>
+                        </tr>
+
+                        <tr id="details-{{ $product->id }}" class="hidden bg-slate-50/50">
+                            <td colspan="5" class="px-6 py-4 border-t border-slate-100">
+                                <div class="pl-14">
+                                    <p class="text-[10px] font-bold text-slate-400 uppercase mb-2">Desglose de Ubicaciones Físicas</p>
+                                    <div class="flex flex-wrap gap-2">
+                                        @foreach($product->inventory as $inv)
+                                            @if($inv->quantity > 0)
+                                                <div class="bg-white border border-slate-200 px-3 py-1.5 rounded-md shadow-sm flex items-center gap-2">
+                                                    <span class="font-mono text-xs font-bold text-custom-primary">
+                                                        <i class="fa-solid fa-location-dot mr-1"></i>{{ $inv->location->code }}
+                                                    </span>
+                                                    <span class="h-4 w-px bg-slate-200"></span>
+                                                    <span class="text-xs font-bold text-slate-600">{{ $inv->quantity }} un.</span>
+                                                    @if($inv->lpn)
+                                                        <span class="h-4 w-px bg-slate-200"></span>
+                                                        <span class="text-[9px] font-mono text-purple-500" title="LPN / Serial">{{ $inv->lpn }}</span>
+                                                    @endif
+                                                </div>
+                                            @endif
+                                        @endforeach
+                                    </div>
+                                    <div class="mt-3 flex gap-2">
+                                        <a href="{{ route('admin.inventory.movements', ['sku' => $product->sku]) }}" class="text-xs text-blue-600 hover:underline">
+                                            Ver Kardex Completo
+                                        </a>
+                                        <span class="text-slate-300">|</span>
+                                        <a href="{{ route('admin.inventory.adjustments') }}" class="text-xs text-amber-600 hover:underline">
+                                            Ajustar Inventario
+                                        </a>
+                                    </div>
                                 </div>
                             </td>
                         </tr>
+
                     @empty
                         <tr>
-                            <td colspan="7" class="px-6 py-16 text-center">
+                            <td colspan="5" class="p-12 text-center">
                                 <div class="flex flex-col items-center opacity-50">
                                     <div class="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mb-4">
                                         <i class="fa-solid fa-box-open text-3xl text-slate-300"></i>
                                     </div>
-                                    <p class="font-bold text-slate-600">No se encontraron existencias físicas</p>
-                                    <p class="text-xs text-slate-400 max-w-xs mx-auto">Realice una recepción de mercancía para ver stock aquí.</p>
+                                    <p class="font-bold text-slate-600">Sin Inventario</p>
+                                    <p class="text-xs text-slate-400">No se encontraron productos con el filtro actual.</p>
                                 </div>
                             </td>
                         </tr>
@@ -170,7 +185,6 @@
             </table>
         </div>
         
-        <!-- Paginación -->
         @if($inventory->hasPages())
             <div class="p-4 border-t border-slate-100 bg-slate-50/50">
                 {{ $inventory->appends(request()->query())->links() }}

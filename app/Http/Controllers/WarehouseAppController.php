@@ -401,15 +401,14 @@ class WarehouseAppController extends Controller
             $order->update(['status' => 'processing']);
         }
 
-        // 1. Buscar el siguiente ítem pendiente de pickear
-        $nextItem = $order->items->where('quantity_picked', '<', 'quantity')->first();
+        // 1. Buscar el siguiente ítem pendiente de pickear (Usando nombre de columna correcto)
+        $nextItem = $order->items->where('picked_quantity', '<', 'requested_quantity')->first();
 
         if (!$nextItem) {
             return view('warehouse.picking.finished', compact('order'));
         }
 
         // 2. BUSCAR LA ASIGNACIÓN ESPECÍFICA (ALLOCATION)
-        // El admin ya decidió de dónde sacar esto. Buscamos esa instrucción.
         $allocation = OrderAllocation::where('order_item_id', $nextItem->id)
                         ->where('quantity', '>', 0) // Que todavía tenga saldo por sacar
                         ->with(['inventory.location', 'inventory.product'])
@@ -483,8 +482,8 @@ class WarehouseAppController extends Controller
             $allocation->decrement('quantity', $qty);
             if ($allocation->quantity == 0) $allocation->delete();
 
-            // 3. Sumar al progreso del Picking
-            $orderItem->increment('quantity_picked', $qty);
+            // 3. Sumar al progreso del Picking (Usando nombre de columna correcto)
+            $orderItem->increment('picked_quantity', $qty);
 
             DB::commit();
             return redirect()->route('warehouse.picking.process', $request->order_id)
@@ -501,7 +500,7 @@ class WarehouseAppController extends Controller
         $order = Order::findOrFail($id);
         
         // Validar que todo esté pickeado
-        $pending = $order->items->where('quantity_picked', '<', 'quantity')->count();
+        $pending = $order->items->where('picked_quantity', '<', 'requested_quantity')->count();
         if ($pending > 0) return back()->with('error', 'Faltan productos.');
 
         $order->update(['status' => 'picked']); 

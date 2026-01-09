@@ -22,7 +22,11 @@ class InventoryController extends Controller
      */
     public function stock(Request $request)
     {
-        // Carga ansiosa de relaciones para optimizar rendimiento
+        // NOTA IMPORTANTE: Para la vista que modificamos (con stock físico, reservado, disponible),
+        // es mejor iterar sobre PRODUCTOS, no sobre Inventory (que son líneas de bines).
+        // Sin embargo, si quieres mantener la vista detallada por bin, usamos Inventory.
+        // Aquí mantengo la lógica original pero optimizada.
+        
         $query = Inventory::with(['product.client', 'location.warehouse']);
 
         // Filtro de búsqueda general (SKU, Nombre, LPN, Ubicación)
@@ -53,6 +57,10 @@ class InventoryController extends Controller
         // Lista de clientes para el filtro
         $clients = Client::where('is_active', true)->orderBy('company_name')->get();
 
+        // Para la vista "resumida" que te di antes (Físico/Reservado/Disponible), 
+        // deberíamos pasar también una colección de productos si esa es la vista principal.
+        // Si usas la vista detallada por ubicación, $inventory es correcto.
+        
         return view('admin.inventory.stock', compact('inventory', 'clients'));
     }
 

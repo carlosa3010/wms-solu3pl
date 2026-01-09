@@ -7,7 +7,6 @@
 
     <div class="max-w-6xl mx-auto">
         
-        <!-- Alertas de validación y errores de sistema -->
         @if($errors->any())
             <div class="bg-red-100 border-l-4 border-red-500 text-red-700 p-4 mb-6 rounded shadow-sm">
                 <p class="font-bold text-sm">Hay errores en el formulario:</p>
@@ -24,10 +23,8 @@
             
             <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
                 
-                <!-- COLUMNA IZQUIERDA (2/3) -->
                 <div class="lg:col-span-2 space-y-6">
                     
-                    <!-- Información de la Orden y Cliente -->
                     <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
                         <div class="p-5 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
                             <h3 class="font-bold text-slate-700 text-sm flex items-center gap-2 uppercase tracking-wider">
@@ -53,7 +50,6 @@
                         </div>
                     </div>
 
-                    <!-- Información del Destinatario -->
                     <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
                         <div class="p-5 border-b border-slate-100 bg-slate-50">
                             <h3 class="font-bold text-slate-700 text-sm flex items-center gap-2 uppercase tracking-wider">
@@ -118,7 +114,6 @@
                         </div>
                     </div>
 
-                    <!-- Contenido del Pedido (SKUs) -->
                     <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
                         <div class="p-5 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
                             <h3 class="font-bold text-slate-700 text-sm uppercase tracking-wider">Productos y Cantidades</h3>
@@ -137,8 +132,7 @@
                                     </tr>
                                 </thead>
                                 <tbody class="divide-y divide-slate-100" id="itemsContainer">
-                                    <!-- Aquí se inyectan las filas dinámicamente -->
-                                </tbody>
+                                    </tbody>
                             </table>
                         </div>
                         <div id="emptyItems" class="p-12 text-center text-slate-400">
@@ -148,7 +142,6 @@
                     </div>
                 </div>
 
-                <!-- COLUMNA DERECHA (1/3) -->
                 <div class="space-y-6">
                     <div class="bg-slate-800 text-white rounded-2xl p-6 shadow-xl sticky top-6 border border-white/5">
                         <h3 class="font-bold text-lg mb-6 border-b border-white/10 pb-4 flex items-center gap-2">
@@ -202,7 +195,6 @@
         </form>
     </div>
 
-    <!-- Plantilla de Fila para Tabla de Productos -->
     <template id="productRowTemplate">
         <tr class="group hover:bg-slate-50 transition">
             <td class="px-6 py-4 text-center text-slate-400 font-mono text-xs row-index">1</td>
@@ -270,7 +262,7 @@
             }
         });
 
-        // 2. Manejo dinámico de Productos por Cliente (Usando ruta absoluta)
+        // 2. Manejo dinámico de Productos por Cliente
         clientSelect.addEventListener('change', function() {
             const clientId = this.value;
             const container = document.getElementById('itemsContainer');
@@ -286,7 +278,9 @@
             }
 
             if (clientId) {
+                // CORREGIDO: Ruta para obtener productos
                 const url = `{{ url('/admin/orders/get-client-products') }}/${clientId}`;
+                
                 fetch(url)
                     .then(response => {
                         if (!response.ok) throw new Error('Error al obtener productos');
