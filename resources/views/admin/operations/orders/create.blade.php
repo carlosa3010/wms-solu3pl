@@ -196,7 +196,7 @@
     </div>
 
     <template id="productRowTemplate">
-        <tr class="group hover:bg-slate-50 transition">
+        <tr class="group hover:bg-slate-50 transition product-row">
             <td class="px-6 py-4 text-center text-slate-400 font-mono text-xs row-index">1</td>
             <td class="px-6 py-4">
                 <select name="items[INDEX][product_id]" required onchange="handleProductSelect(this)" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white focus:ring-2 ring-indigo-500 outline-none transition sku-selector">
@@ -231,7 +231,7 @@
         const stateSelect = document.getElementById('customer_state');
         const clientSelect = document.getElementById('client_id');
 
-        // 1. Manejo dinámico de Estados
+        // 1. Manejo dinámico de Estados (Ruta corregida)
         countrySelect.addEventListener('change', function() {
             const selectedOption = this.options[this.selectedIndex];
             const countryId = selectedOption.getAttribute('data-id');
@@ -240,7 +240,9 @@
             stateSelect.disabled = true;
 
             if (countryId) {
-                const url = `{{ url('/admin/inventory/get-states') }}/${countryId}`;
+                // Usamos la ruta nombrada definida en web.php
+                const url = `{{ route('admin.get_states', ':id') }}`.replace(':id', countryId);
+                
                 fetch(url)
                     .then(response => {
                         if (!response.ok) throw new Error('Error al obtener estados');
@@ -262,7 +264,7 @@
             }
         });
 
-        // 2. Manejo dinámico de Productos por Cliente
+        // 2. Manejo dinámico de Productos por Cliente (Ruta corregida API)
         clientSelect.addEventListener('change', function() {
             const clientId = this.value;
             const container = document.getElementById('itemsContainer');
@@ -270,7 +272,8 @@
             
             if(container.children.length > 0) {
                 if(!confirm("Cambiar el cliente eliminará los productos actuales de la lista. ¿Continuar?")) {
-                    return;
+                    // Revertir selección si cancela (opcional, requeriría guardar previous value)
+                    return; 
                 }
                 container.innerHTML = '';
                 document.getElementById('emptyItems').classList.remove('hidden');
@@ -278,23 +281,26 @@
             }
 
             if (clientId) {
-                const url = `{{ url('/admin/orders/get-client-products') }}/${clientId}`;
+                // CORRECCIÓN: Ruta de API que ahora existe en web.php
+                const url = `{{ route('admin.api.client_products', ':id') }}`.replace(':id', clientId);
                 
                 fetch(url)
                     .then(response => {
-                        if (!response.ok) throw new Error('Error al obtener productos');
+                        if (!response.ok) throw new Error('Error HTTP ' + response.status);
                         return response.json();
                     })
                     .then(data => {
+                        console.log("Productos:", data); // Debug
                         clientProducts = data;
                         addBtn.disabled = false;
+                        
                         if(data.length === 0) {
-                             alert("Este cliente no tiene productos con stock disponible.");
+                             alert("Este cliente no tiene productos activos o con stock disponible.");
                         }
                     })
                     .catch(error => {
                         console.error('AJAX Error:', error);
-                        alert("Error al cargar los productos del cliente.");
+                        alert("Error al cargar los productos del cliente. Verifique la conexión.");
                         addBtn.disabled = true;
                     });
             } else {
@@ -323,7 +329,8 @@
         clientProducts.forEach(p => {
             const opt = document.createElement('option');
             opt.value = p.id;
-            opt.textContent = `${p.sku} | ${p.name}`;
+            // Mostrar Stock Global en el dropdown para facilitar selección
+            opt.textContent = `${p.sku} | ${p.name} (Stock: ${p.stock_available})`; 
             select.appendChild(opt);
         });
 
@@ -339,11 +346,18 @@
         const display = row.querySelector('.stock-display');
         const input = row.querySelector('.qty-input');
         
+        // Buscar producto en el array local
         const prod = clientProducts.find(p => p.id == prodId);
+        
         if(prod) {
             display.innerText = `${prod.stock_available} unidades`;
+            // Validar stock máximo
             input.max = prod.stock_available;
-            if(parseInt(input.value) > prod.stock_available) input.value = prod.stock_available;
+            
+            if(parseInt(input.value) > prod.stock_available) {
+                input.value = prod.stock_available;
+                alert(`Solo hay ${prod.stock_available} unidades disponibles de este producto.`);
+            }
         } else {
             display.innerText = '0 unidades';
             input.max = 0;
@@ -368,12 +382,14 @@
     }
 
     function updateCalculations(input = null) {
+        // Validar maximo si viene de un input
         if (input && input.max && parseInt(input.value) > parseInt(input.max)) {
             input.value = input.max;
         }
 
-        const rows = document.querySelectorAll('#itemsContainer tr');
+        const rows = document.querySelectorAll('.product-row'); // Usar clase específica
         let totalUnits = 0;
+        
         rows.forEach(r => {
             const q = r.querySelector('.qty-input').value;
             if(q) totalUnits += parseInt(q);

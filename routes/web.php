@@ -9,13 +9,13 @@ use App\Http\Controllers\ProductController;
 use App\Http\Controllers\SettingController;
 use App\Http\Controllers\CategoryController;
 use App\Http\Controllers\LeadController;
-use App\Http\Controllers\WarehouseManagementController; // Config Admin
+use App\Http\Controllers\WarehouseManagementController;
 use App\Http\Controllers\BinTypeController;
 use App\Http\Controllers\InventoryController;
-use App\Http\Controllers\ReceptionController; // Admin Legacy
+use App\Http\Controllers\ReceptionController;
 use App\Http\Controllers\OrderController;
-use App\Http\Controllers\ShippingController; // Admin Legacy
-use App\Http\Controllers\TransferController; // Admin
+use App\Http\Controllers\ShippingController;
+use App\Http\Controllers\TransferController;
 use App\Http\Controllers\BillingController;
 use App\Http\Controllers\ServicePlanController;
 use App\Http\Controllers\RMAController;
@@ -25,8 +25,8 @@ use App\Http\Controllers\ShippingMethodController;
 use App\Http\Controllers\PackageTypeController;
 use App\Http\Controllers\Client\ClientPortalController;
 use App\Http\Controllers\Auth\PasswordController;
-use App\Http\Controllers\PickingController; // Admin Intelligence
-use App\Http\Controllers\WarehouseAppController; // OPERATIVO (PDA/Tableta)
+use App\Http\Controllers\PickingController;
+use App\Http\Controllers\WarehouseAppController;
 
 /*
 |--------------------------------------------------------------------------
@@ -49,21 +49,24 @@ Route::post('/forgot-password', [PasswordController::class, 'sendResetLinkEmail'
 Route::get('/reset-password/{token}', [PasswordController::class, 'showResetForm'])->name('password.reset');
 Route::post('/reset-password', [PasswordController::class, 'reset'])->name('password.update');
 
-// --- RUTAS PROTEGIDAS (Requieren Login) ---
+// --- RUTAS PROTEGIDAS (Requieren Login General) ---
 Route::middleware(['auth'])->group(function () {
 
-    // Gestión de Perfil de Usuario
+    // Gestión de Perfil de Usuario (Común para todos)
     Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
     Route::put('/profile', [ProfileController::class, 'update'])->name('profile.update');
     Route::put('/profile/password', [ProfileController::class, 'updatePassword'])->name('profile.password');
 
     // =========================================================================
-    // 1. ÁREA ADMINISTRATIVA (admin/) - Gestión Global
+    // 1. ÁREA ADMINISTRATIVA (Admin, Manager, Supervisor)
     // =========================================================================
-    Route::prefix('admin')->name('admin.')->group(function () {
+    Route::middleware(['role:admin,manager,supervisor'])->prefix('admin')->name('admin.')->group(function () {
         
         // Dashboard Principal
         Route::get('/dashboard', [DashboardController::class, 'adminDashboard'])->name('dashboard');
+
+        // --- API INTERNA PARA PRODUCTOS (Soluciona error en Crear Orden) ---
+        Route::get('/api/client-products/{clientId}', [OrderController::class, 'getClientProducts'])->name('api.client_products');
 
         // Módulo: Comercial (Clientes & CRM)
         Route::prefix('clients')->group(function () {
@@ -92,7 +95,7 @@ Route::middleware(['auth'])->group(function () {
             'update'  => 'products.update',
             'destroy' => 'products.destroy',
         ]);
-        Route::get('products/import', [ProductController::class, 'importView'])->name('products.import');
+        Route::get('products/import/view', [ProductController::class, 'importView'])->name('products.import');
         Route::post('products/import', [ProductController::class, 'import'])->name('products.import.post');
 
         Route::resource('categories', CategoryController::class)->only(['index', 'store', 'update', 'destroy'])->names([
@@ -109,12 +112,11 @@ Route::middleware(['auth'])->group(function () {
             Route::get('/adjustments', [InventoryController::class, 'adjustments'])->name('inventory.adjustments');
             Route::post('/adjustments', [InventoryController::class, 'storeAdjustment'])->name('inventory.adjustments.store');
             
+            // APIs para selectores dinámicos
             Route::get('/get-sources', [InventoryController::class, 'getSources'])->name('inventory.get_sources');
             Route::get('/get-bins', [InventoryController::class, 'getBins'])->name('inventory.get_bins');
-            
             Route::get('/get-states/{countryId}', [OrderController::class, 'getStatesByCountry'])->name('get_states');
             
-            // Visualización de Mapa (Solo lectura aquí, config abajo)
             Route::get('/map', [WarehouseManagementController::class, 'index'])->name('inventory.map');
         });
 
@@ -123,7 +125,7 @@ Route::middleware(['auth'])->group(function () {
         Route::get('/coverage', [WarehouseManagementController::class, 'coverage'])->name('coverage.index');
         Route::put('/branches/{id}/coverage', [WarehouseManagementController::class, 'updateCoverage'])->name('branches.coverage');
         
-        // AJAX Map Builder
+        // Rutas AJAX para el diseñador de mapa
         Route::post('warehouses/generate-layout', [WarehouseManagementController::class, 'generateLayout'])->name('warehouses.generate_layout');
         Route::post('warehouses/save-rack', [WarehouseManagementController::class, 'saveRack'])->name('warehouses.save_rack');
         Route::get('warehouses/rack-details', [WarehouseManagementController::class, 'getRackDetails'])->name('warehouses.rack_details');
@@ -138,7 +140,7 @@ Route::middleware(['auth'])->group(function () {
         Route::put('/warehouses/{id}', [WarehouseManagementController::class, 'updateWarehouse'])->name('warehouses.update'); 
         Route::delete('/warehouses/{id}', [WarehouseManagementController::class, 'destroyWarehouse'])->name('warehouses.destroy');
 
-        // Módulo: Operaciones (ADMINISTRATIVO)
+        // Módulo: Operaciones
         Route::prefix('receptions')->group(function () {
             Route::get('/', [ReceptionController::class, 'index'])->name('receptions.index');
             Route::get('/create', [ReceptionController::class, 'create'])->name('receptions.create');
@@ -146,6 +148,8 @@ Route::middleware(['auth'])->group(function () {
             Route::get('/{id}', [ReceptionController::class, 'show'])->name('receptions.show');
             Route::delete('/{id}', [ReceptionController::class, 'destroy'])->name('receptions.destroy');
             Route::get('/{id}/print-labels', [ReceptionController::class, 'printLabels'])->name('receptions.print_labels');
+            Route::post('/{asn}/receive', [ReceptionController::class, 'receiveItem'])->name('receptions.receive');
+            Route::post('/{asn}/complete', [ReceptionController::class, 'complete'])->name('receptions.complete');
         });
 
         Route::prefix('orders')->group(function () {
@@ -155,9 +159,11 @@ Route::middleware(['auth'])->group(function () {
             Route::get('/{id}', [OrderController::class, 'show'])->name('orders.show');
             Route::delete('/{id}', [OrderController::class, 'destroy'])->name('orders.destroy');
             Route::get('/{id}/picking-list', [OrderController::class, 'printPickingList'])->name('orders.picking');
-            
-            Route::get('/get-client-products/{clientId}', [OrderController::class, 'getClientProducts'])->name('get_client_products');
+            Route::post('/{id}/fulfill', [OrderController::class, 'fulfill'])->name('orders.fulfill');
             Route::post('/{id}/cancel', [OrderController::class, 'cancel'])->name('orders.cancel'); 
+            
+            // Ruta legacy para compatibilidad si alguna vista vieja la usa
+            Route::get('/get-client-products/{clientId}', [OrderController::class, 'getClientProducts']);
         });
 
         Route::prefix('operations/picking')->name('picking.')->group(function () {
@@ -166,13 +172,20 @@ Route::middleware(['auth'])->group(function () {
             Route::post('/wave', [PickingController::class, 'createWave'])->name('wave');
         });
 
-        // Módulo: Traslados (Logística Admin)
+        Route::prefix('shipping')->group(function () {
+            Route::get('/', [ShippingController::class, 'index'])->name('shipping.index');
+            Route::get('/{id}/process', [ShippingController::class, 'process'])->name('shipping.process');
+            Route::post('/{id}/ship', [ShippingController::class, 'ship'])->name('shipping.ship');
+            Route::get('/{id}/manifest', [ShippingController::class, 'printManifest'])->name('shipping.manifest');
+        });
+
+        // Módulo: Traslados (Gestión Administrativa)
         Route::prefix('transfers')->group(function () {
             Route::get('/', [TransferController::class, 'index'])->name('transfers.index');
             Route::get('/create', [TransferController::class, 'create'])->name('transfers.create');
             Route::post('/', [TransferController::class, 'store'])->name('transfers.store');
-            Route::get('/{transfer}/manifest', [TransferController::class, 'printManifest'])->name('transfers.manifest'); // Opcional
-            //ship y receive admin methods (backups)
+            Route::get('/{transfer}/manifest', [TransferController::class, 'printManifest'])->name('transfers.manifest');
+            Route::get('/{transfer}/label', [TransferController::class, 'printLabel'])->name('transfers.label');
             Route::post('/{id}/ship', [TransferController::class, 'ship'])->name('transfers.ship');
             Route::post('/{id}/receive', [TransferController::class, 'receive'])->name('transfers.receive');
         });
@@ -248,9 +261,9 @@ Route::middleware(['auth'])->group(function () {
     });
 
     // =========================================================================
-    // 2. PORTAL CLIENTES (client/)
+    // 2. PORTAL CLIENTES (Solo rol 'user')
     // =========================================================================
-    Route::prefix('portal')->name('client.')->group(function () {
+    Route::middleware(['role:user'])->prefix('portal')->name('client.')->group(function () {
         Route::get('/dashboard', [ClientPortalController::class, 'dashboard'])->name('portal');
         
         Route::prefix('catalog')->group(function () {
@@ -302,9 +315,9 @@ Route::middleware(['auth'])->group(function () {
     });
 
     // =========================================================================
-    // 3. PANEL WAREHOUSE APP (Operativo / PDA / Pantalla Táctil)
+    // 3. PANEL WAREHOUSE APP (Solo 'operator' o 'admin' para debug)
     // =========================================================================
-    Route::middleware(['auth'])->prefix('warehouse')->name('warehouse.')->group(function () {
+    Route::middleware(['role:operator,admin'])->prefix('warehouse')->name('warehouse.')->group(function () {
         
         // Dashboard y Lookup Global
         Route::get('/', [WarehouseAppController::class, 'index'])->name('dashboard');
@@ -340,14 +353,14 @@ Route::middleware(['auth'])->group(function () {
         Route::get('/shipping', [WarehouseAppController::class, 'shippingIndex'])->name('shipping.index');
         Route::post('/shipping/manifest', [WarehouseAppController::class, 'shippingManifest'])->name('shipping.manifest');
 
-        // 6. TRASLADOS (Movimientos Internos e Inter-sucursales) - NUEVO
+        // 6. TRASLADOS (NUEVO - Operativo)
         Route::get('/transfers', [WarehouseAppController::class, 'transfersIndex'])->name('transfers.index');
         
-        // 6.1 Salientes (Despacho a otra sucursal)
+        // 6.1 Salientes (Picking para traslado)
         Route::get('/transfers/outbound/{id}', [WarehouseAppController::class, 'transferOutboundProcess'])->name('transfers.outbound');
         Route::post('/transfers/outbound/{id}/confirm', [WarehouseAppController::class, 'transferOutboundConfirm'])->name('transfers.outbound_confirm');
         
-        // 6.2 Entrantes (Recepción de otra sucursal)
+        // 6.2 Entrantes (Recepción de traslado)
         Route::get('/transfers/inbound/{id}', [WarehouseAppController::class, 'transferInboundProcess'])->name('transfers.inbound');
         Route::post('/transfers/inbound/{id}/confirm', [WarehouseAppController::class, 'transferInboundConfirm'])->name('transfers.inbound_confirm');
 
