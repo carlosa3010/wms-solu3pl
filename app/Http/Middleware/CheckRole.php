@@ -17,28 +17,23 @@ class CheckRole
 
         $user = Auth::user();
 
-        // Si el usuario tiene el rol permitido, adelante
         if (in_array($user->role, $roles)) {
             return $next($request);
         }
 
-        // --- LÓGICA DE REDIRECCIÓN SI NO TIENE PERMISO ---
-        
-        // 1. Si es Operador -> Panel Warehouse
+        // REDIRECCIONES CORRECTAS
         if ($user->role === 'operator') {
-            return redirect()->route('warehouse.index'); // Esta ruta ya existe en web.php
+            return redirect()->route('warehouse.dashboard'); // <--- AQUI
         }
         
-        // 2. Si es Cliente (User) -> Portal
         if ($user->role === 'user') {
             return redirect()->route('client.portal');
         }
 
-        // 3. Si es Admin/Manager -> Panel Admin
         if (in_array($user->role, ['admin', 'manager', 'supervisor'])) {
             return redirect()->route('admin.dashboard');
         }
 
-        return abort(403);
+        abort(403, 'Acceso denegado.');
     }
 }

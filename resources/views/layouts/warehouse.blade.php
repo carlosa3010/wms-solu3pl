@@ -26,7 +26,7 @@
 
     <header class="h-16 bg-slate-800 flex items-center justify-between px-4 shadow-lg shrink-0 border-b border-slate-700 z-50">
         <div class="flex items-center gap-4">
-            <a href="{{ route('warehouse.index') }}" class="w-10 h-10 flex items-center justify-center rounded-xl bg-slate-700 hover:bg-slate-600 text-slate-300 hover:text-white transition active:scale-95">
+            <a href="{{ route('warehouse.dashboard') }}" class="w-10 h-10 flex items-center justify-center rounded-xl bg-slate-700 hover:bg-slate-600 text-slate-300 hover:text-white transition active:scale-95">
                 <i class="fa-solid fa-house text-lg"></i>
             </a>
             

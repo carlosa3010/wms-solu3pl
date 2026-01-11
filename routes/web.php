@@ -65,7 +65,7 @@ Route::middleware(['auth'])->group(function () {
         // Dashboard Principal
         Route::get('/dashboard', [DashboardController::class, 'adminDashboard'])->name('dashboard');
 
-        // --- API INTERNA PARA PRODUCTOS (Soluciona error en Crear Orden) ---
+        // --- API INTERNA PARA PRODUCTOS ---
         Route::get('/api/client-products/{clientId}', [OrderController::class, 'getClientProducts'])->name('api.client_products');
 
         // Módulo: Comercial (Clientes & CRM)
@@ -162,7 +162,7 @@ Route::middleware(['auth'])->group(function () {
             Route::post('/{id}/fulfill', [OrderController::class, 'fulfill'])->name('orders.fulfill');
             Route::post('/{id}/cancel', [OrderController::class, 'cancel'])->name('orders.cancel'); 
             
-            // Ruta legacy para compatibilidad si alguna vista vieja la usa
+            // Ruta legacy para compatibilidad
             Route::get('/get-client-products/{clientId}', [OrderController::class, 'getClientProducts']);
         });
 
@@ -319,8 +319,8 @@ Route::middleware(['auth'])->group(function () {
     // =========================================================================
     Route::middleware(['role:operator,admin'])->prefix('warehouse')->name('warehouse.')->group(function () {
         
-        // CORRECCIÓN CLAVE: El nombre es 'index' para que el redirect desde AuthController y Middleware funcione.
-        Route::get('/', [WarehouseAppController::class, 'index'])->name('index'); 
+        // CORRECCIÓN: Nombre de ruta 'dashboard' para coincidir con AuthController y Middleware
+        Route::get('/', [WarehouseAppController::class, 'dashboard'])->name('dashboard'); 
         
         Route::get('/lookup', [WarehouseAppController::class, 'lookup'])->name('lookup');
 
@@ -345,13 +345,13 @@ Route::middleware(['auth'])->group(function () {
         Route::post('/picking/scan-item', [WarehouseAppController::class, 'pickingScanItem'])->name('picking.scan_item');
         Route::post('/picking/{id}/complete', [WarehouseAppController::class, 'pickingComplete'])->name('picking.complete');
 
-        // 4. Packing (Empaque) - COMPLETADO
+        // 4. Packing (Empaque)
         Route::get('/packing', [WarehouseAppController::class, 'packingIndex'])->name('packing.index');
         Route::get('/packing/{order}', [WarehouseAppController::class, 'packingProcess'])->name('packing.process');
         Route::post('/packing/{order}/close', [WarehouseAppController::class, 'packingClose'])->name('packing.close');
-        Route::get('/packing/{id}/label', [WarehouseAppController::class, 'packingLabel'])->name('packing.label'); // NUEVA
+        Route::get('/packing/{id}/label', [WarehouseAppController::class, 'packingLabel'])->name('packing.label');
 
-        // 5. Shipping / Despacho - COMPLETADO
+        // 5. Shipping / Despacho
         Route::get('/shipping', [WarehouseAppController::class, 'shippingIndex'])->name('shipping.index');
         Route::post('/shipping/manifest', [WarehouseAppController::class, 'shippingManifest'])->name('shipping.manifest');
 
@@ -369,9 +369,9 @@ Route::middleware(['auth'])->group(function () {
         // 7. Inventario / Consultas
         Route::get('/inventory', [WarehouseAppController::class, 'inventoryIndex'])->name('inventory.index');
         
-        // 8. Devoluciones (RMA) - COMPLETADO
+        // 8. Devoluciones (RMA)
         Route::get('/rma', [WarehouseAppController::class, 'rmaIndex'])->name('rma.index');
         Route::get('/rma/{id}', [WarehouseAppController::class, 'rmaProcess'])->name('rma.process');
-        Route::post('/rma/{id}/complete', [WarehouseAppController::class, 'rmaComplete'])->name('rma.complete'); // NUEVA
+        Route::post('/rma/{id}/complete', [WarehouseAppController::class, 'rmaComplete'])->name('rma.complete');
     });
 });

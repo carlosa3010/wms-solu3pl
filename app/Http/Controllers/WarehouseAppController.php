@@ -28,7 +28,7 @@ class WarehouseAppController extends Controller
     /**
      * Dashboard Principal
      */
-    public function index()
+    public function dashboard()
     {
         return view('warehouse.dashboard');
     }
