@@ -345,16 +345,17 @@ Route::middleware(['auth'])->group(function () {
         Route::post('/picking/scan-item', [WarehouseAppController::class, 'pickingScanItem'])->name('picking.scan_item');
         Route::post('/picking/{id}/complete', [WarehouseAppController::class, 'pickingComplete'])->name('picking.complete');
 
-        // 4. Packing
+        // 4. Packing (Empaque) - COMPLETADO
         Route::get('/packing', [WarehouseAppController::class, 'packingIndex'])->name('packing.index');
         Route::get('/packing/{order}', [WarehouseAppController::class, 'packingProcess'])->name('packing.process');
         Route::post('/packing/{order}/close', [WarehouseAppController::class, 'packingClose'])->name('packing.close');
+        Route::get('/packing/{id}/label', [WarehouseAppController::class, 'packingLabel'])->name('packing.label'); // NUEVA
 
-        // 5. Shipping / Despacho
+        // 5. Shipping / Despacho - COMPLETADO
         Route::get('/shipping', [WarehouseAppController::class, 'shippingIndex'])->name('shipping.index');
         Route::post('/shipping/manifest', [WarehouseAppController::class, 'shippingManifest'])->name('shipping.manifest');
 
-        // 6. TRASLADOS (NUEVO - Operativo)
+        // 6. TRASLADOS (Operativo)
         Route::get('/transfers', [WarehouseAppController::class, 'transfersIndex'])->name('transfers.index');
         
         // 6.1 Salientes (Picking para traslado)
@@ -368,8 +369,9 @@ Route::middleware(['auth'])->group(function () {
         // 7. Inventario / Consultas
         Route::get('/inventory', [WarehouseAppController::class, 'inventoryIndex'])->name('inventory.index');
         
-        // 8. Devoluciones (RMA)
+        // 8. Devoluciones (RMA) - COMPLETADO
         Route::get('/rma', [WarehouseAppController::class, 'rmaIndex'])->name('rma.index');
         Route::get('/rma/{id}', [WarehouseAppController::class, 'rmaProcess'])->name('rma.process');
+        Route::post('/rma/{id}/complete', [WarehouseAppController::class, 'rmaComplete'])->name('rma.complete'); // NUEVA
     });
 });

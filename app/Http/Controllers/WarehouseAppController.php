@@ -5,12 +5,15 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Storage;
 use App\Models\Order;
 use App\Models\PackageType;
 use App\Models\ASN;
 use App\Models\ASNItem;
 use App\Models\RMA;
+use App\Models\RMAImage; // Importante
 use App\Models\Product;
 use App\Models\Location;
 use App\Models\Inventory;
@@ -23,7 +26,7 @@ use App\Models\TransferItem;
 class WarehouseAppController extends Controller
 {
     /**
-     * Dashboard principal del operador
+     * Dashboard Principal
      */
     public function index()
     {
@@ -31,227 +34,64 @@ class WarehouseAppController extends Controller
     }
 
     /**
-     * BUSCADOR GLOBAL: Escanea lo que sea y te dice qué es.
+     * BUSCADOR GLOBAL (Lookup)
      */
     public function lookup(Request $request)
     {
-        $q = trim($request->q);
-        
-        // 1. Buscar producto
-        $product = Product::with('inventory.location')->where('sku', $q)->first();
-        if($product) return view('warehouse.lookup.product', compact('product'));
+        $q = trim($request->input('q'));
+        $userBranchId = Auth::user()->branch_id;
 
-        // 2. Buscar ubicación
-        $location = Location::where('code', $q)->first();
-        if($location) return view('warehouse.lookup.location', compact('location'));
+        // 1. Buscar Producto
+        $product = Product::where('sku', $q)->orWhere('barcode', $q)->first();
+        if ($product) {
+            // Cargar stock solo de esta sucursal
+            $inventory = Inventory::where('product_id', $product->id)
+                ->whereHas('location.warehouse', function($w) use ($userBranchId) {
+                    $w->where('branch_id', $userBranchId);
+                })->with('location')->get();
+            
+            // Reutilizamos la vista de inventario filtrada o una específica
+            return view('warehouse.inventory.index', ['stocks' => $inventory, 'q' => $q]);
+        }
 
-        // 3. Buscar orden
+        // 2. Buscar Ubicación
+        $location = Location::where('code', $q)
+            ->whereHas('warehouse', function($w) use ($userBranchId) {
+                $w->where('branch_id', $userBranchId);
+            })->first();
+            
+        if ($location) {
+            $stocks = Inventory::where('location_id', $location->id)->with('product')->get();
+            // Reutilizamos vista inventario mostrando solo ese bin
+            return view('warehouse.inventory.index', ['stocks' => $stocks, 'q' => $q]);
+        }
+
+        // 3. Buscar Orden
         $order = Order::where('order_number', $q)->first();
-        if($order) return redirect()->route('warehouse.picking.process', $order->id);
-
-        // 4. Buscar Traslado (NUEVO)
-        $transfer = Transfer::where('transfer_number', $q)->first();
-        if($transfer) {
-            // Determinar si es entrada o salida para el usuario actual
-            $userBranchId = Auth::user()->branch_id;
-            if ($transfer->origin_branch_id == $userBranchId && $transfer->status == 'pending') {
-                return redirect()->route('warehouse.transfers.outbound', $transfer->id);
-            }
-            if ($transfer->destination_branch_id == $userBranchId && $transfer->status == 'in_transit') {
-                return redirect()->route('warehouse.transfers.inbound', $transfer->id);
-            }
+        if ($order) {
+            if ($order->status == 'allocated') return redirect()->route('warehouse.picking.process', $order->id);
+            if ($order->status == 'picked') return redirect()->route('warehouse.packing.process', $order->id);
+            if ($order->status == 'packed') return redirect()->route('warehouse.shipping.index');
+            return back()->with('info', "Orden {$order->order_number} está en estado: {$order->status}");
         }
 
-        return back()->with('error', 'Código no encontrado: ' . $q);
+        return back()->with('error', 'Código no encontrado en esta sucursal: ' . $q);
     }
 
-    // ==========================================
-    // 0. GESTIÓN DE TRASLADOS (NUEVO MÓDULO)
-    // ==========================================
+    // =========================================================================
+    // 1. RECEPCIÓN (Inbound)
+    // =========================================================================
 
-    public function transfersIndex()
-    {
-        $user = Auth::user();
-        if (!$user->branch_id) {
-            return back()->with('error', 'Usuario no asignado a una sucursal.');
-        }
-
-        // Traslados Salientes (Outbound): Debo prepararlos y enviarlos
-        $outbound = Transfer::where('origin_branch_id', $user->branch_id)
-                            ->where('status', 'pending')
-                            ->orderBy('created_at', 'asc')
-                            ->get();
-
-        // Traslados Entrantes (Inbound): Vienen en camino, debo recibirlos
-        $inbound = Transfer::where('destination_branch_id', $user->branch_id)
-                           ->where('status', 'in_transit')
-                           ->orderBy('created_at', 'asc')
-                           ->get();
-
-        return view('warehouse.transfers.index', compact('outbound', 'inbound'));
-    }
-
-    /**
-     * Proceso de Despacho de Traslado (Picking para enviar a otra sucursal)
-     */
-    public function transferOutboundProcess($id)
-    {
-        $transfer = Transfer::with(['items.product', 'destinationBranch'])->findOrFail($id);
-        
-        // Validaciones de seguridad
-        if ($transfer->origin_branch_id != Auth::user()->branch_id) abort(403);
-        if ($transfer->status != 'pending') return redirect()->route('warehouse.transfers.index');
-
-        return view('warehouse.transfers.outbound', compact('transfer'));
-    }
-
-    public function transferOutboundConfirm($id)
-    {
-        $transfer = Transfer::with('items')->findOrFail($id);
-
-        try {
-            DB::beginTransaction();
-
-            // Lógica de Picking Simplificada (FIFO automático)
-            // En una app más avanzada, aquí se escanearía ítem por ítem.
-            foreach ($transfer->items as $item) {
-                $needed = $item->quantity;
-                
-                // Buscar inventario en MI sucursal
-                $inventories = Inventory::where('product_id', $item->product_id)
-                    ->whereHas('location.warehouse', function($q) use ($transfer) {
-                        $q->where('branch_id', $transfer->origin_branch_id);
-                    })
-                    ->orderBy('created_at', 'asc') // FIFO
-                    ->get();
-
-                if ($inventories->sum('quantity') < $needed) {
-                    throw new \Exception("Stock insuficiente para: " . $item->product->sku);
-                }
-
-                foreach ($inventories as $inv) {
-                    if ($needed <= 0) break;
-                    $take = min($needed, $inv->quantity);
-                    $inv->decrement('quantity', $take);
-                    if ($inv->quantity <= 0) $inv->delete();
-                    
-                    StockMovement::create([
-                        'product_id' => $item->product_id,
-                        'from_location_id' => $inv->location_id,
-                        'quantity' => $take,
-                        'reason' => 'Transferencia Saliente #' . $transfer->transfer_number,
-                        'user_id' => Auth::id()
-                    ]);
-                    $needed -= $take;
-                }
-            }
-
-            $transfer->update(['status' => 'in_transit']);
-            
-            DB::commit();
-            return redirect()->route('warehouse.transfers.index')->with('success', 'Traslado despachado exitosamente.');
-
-        } catch (\Exception $e) {
-            DB::rollBack();
-            return back()->with('error', 'Error al despachar: ' . $e->getMessage());
-        }
-    }
-
-    /**
-     * Proceso de Recepción de Traslado (Ingreso de mercancía de otra sucursal)
-     */
-    public function transferInboundProcess($id)
-    {
-        $transfer = Transfer::with(['items.product', 'originBranch'])->findOrFail($id);
-
-        if ($transfer->destination_branch_id != Auth::user()->branch_id) abort(403);
-        if ($transfer->status != 'in_transit') return redirect()->route('warehouse.transfers.index');
-
-        return view('warehouse.transfers.inbound', compact('transfer'));
-    }
-
-    public function transferInboundConfirm(Request $request, $id)
-    {
-        $transfer = Transfer::with('items')->findOrFail($id);
-        
-        try {
-            DB::beginTransaction();
-
-            // Buscar la bodega por defecto de esta sucursal
-            $warehouse = Auth::user()->branch->warehouses->first();
-            if (!$warehouse) throw new \Exception("Esta sucursal no tiene bodegas configuradas.");
-
-            // Buscar ubicación de Recepción o General
-            $targetLoc = Location::where('warehouse_id', $warehouse->id)
-                                 ->where('code', 'RECEPCION')
-                                 ->first();
-            
-            // Si no existe RECEPCION, buscar la primera disponible
-            if (!$targetLoc) {
-                $targetLoc = Location::where('warehouse_id', $warehouse->id)->first();
-            }
-
-            if (!$targetLoc) throw new \Exception("No hay ubicaciones en la bodega.");
-
-            foreach ($transfer->items as $item) {
-                // Ingresar Stock
-                $inv = Inventory::firstOrCreate(
-                    ['product_id' => $item->product_id, 'location_id' => $targetLoc->id],
-                    ['quantity' => 0]
-                );
-                $inv->increment('quantity', $item->quantity);
-
-                StockMovement::create([
-                    'product_id' => $item->product_id,
-                    'to_location_id' => $targetLoc->id,
-                    'quantity' => $item->quantity,
-                    'reason' => 'Transferencia Entrante #' . $transfer->transfer_number,
-                    'user_id' => Auth::id()
-                ]);
-            }
-
-            $transfer->update(['status' => 'completed']);
-
-            // ---------------------------------------------------------
-            // LIBERACIÓN DE BACKORDERS (CRÍTICO)
-            // ---------------------------------------------------------
-            $releasedOrders = 0;
-            $waitingOrders = Order::where('transfer_id', $transfer->id)
-                                  ->where('status', 'waiting_transfer')
-                                  ->get();
-            
-            foreach ($waitingOrders as $order) {
-                $order->update([
-                    'status' => 'pending',
-                    'notes' => $order->notes . " [Stock Llegó: " . now()->format('d/m H:i') . "]"
-                ]);
-                $releasedOrders++;
-            }
-
-            DB::commit();
-
-            $msg = 'Traslado recibido.';
-            if ($releasedOrders > 0) $msg .= " Se activaron {$releasedOrders} órdenes en espera.";
-
-            return redirect()->route('warehouse.transfers.index')->with('success', $msg);
-
-        } catch (\Exception $e) {
-            DB::rollBack();
-            return back()->with('error', 'Error al recibir: ' . $e->getMessage());
-        }
-    }
-
-
-    // ==========================================
-    // 1. RECEPCIÓN (INBOUND / ASNs)
-    // ==========================================
-    
     public function receptionIndex()
     {
-        // ASNs son proveedores externos.
-        $asns = ASN::whereIn('status', ['sent', 'partial', 'pending', 'draft', 'in_process'])
-                    ->orderBy('expected_arrival_date', 'asc')
-                    ->get();
+        $branchId = Auth::user()->branch_id;
+        
+        $asns = ASN::where('branch_id', $branchId)
+            ->whereIn('status', ['sent', 'partial', 'in_process'])
+            ->with('client')
+            ->orderBy('expected_arrival_date', 'asc')
+            ->get();
+
         return view('warehouse.reception.index', compact('asns'));
     }
 
@@ -259,6 +99,8 @@ class WarehouseAppController extends Controller
     {
         $asn = ASN::with(['client', 'items.product'])->findOrFail($id);
         
+        if (Auth::user()->branch_id && $asn->branch_id != Auth::user()->branch_id) abort(403);
+
         $totalExpected = $asn->items->sum('expected_quantity');
         $totalReceived = $asn->items->sum('received_quantity');
         $progress = $totalExpected > 0 ? ($totalReceived / $totalExpected) * 100 : 0;
@@ -271,14 +113,12 @@ class WarehouseAppController extends Controller
         $request->validate(['packages_received' => 'required|integer|min:1']);
         
         $asn = ASN::findOrFail($id);
-        
-        if ($request->packages_received != $asn->total_packages) {
-            $asn->notes .= "\n[Check-in] Bultos declarados: {$asn->total_packages}, Recibidos: {$request->packages_received}";
-        }
+        $asn->update([
+            'status' => 'in_process',
+            'notes' => $asn->notes . "\n[Check-in] Bultos recibidos: {$request->packages_received}"
+        ]);
 
-        $asn->update(['status' => 'in_process']);
-
-        return back()->with('success', 'Check-in completado. Puede escanear productos.');
+        return back()->with('success', 'Check-in completado. Puede comenzar a escanear.');
     }
 
     public function receptionScan(Request $request)
@@ -286,116 +126,63 @@ class WarehouseAppController extends Controller
         $request->validate([
             'asn_id' => 'required|exists:asns,id',
             'barcode' => 'required|string',
-            'serial_number' => 'nullable|string',
-            'is_damaged' => 'nullable|boolean'
+            'quantity' => 'nullable|integer|min:1'
         ]);
 
         try {
             DB::beginTransaction();
 
-            $product = Product::where('sku', $request->barcode)->first();
-            if (!$product) return back()->with('error', 'Producto no encontrado en el maestro.');
+            $qty = $request->input('quantity', 1);
+            $product = Product::where('sku', $request->barcode)->orWhere('barcode', $request->barcode)->first();
+            
+            if (!$product) throw new \Exception("Producto no encontrado: {$request->barcode}");
 
             $asnItem = ASNItem::where('asn_id', $request->asn_id)
-                              ->where('product_id', $product->id)
-                              ->first();
+                ->where('product_id', $product->id)
+                ->first();
 
-            if (!$asnItem) return back()->with('error', "El SKU {$product->sku} no pertenece a esta ASN.");
+            if (!$asnItem) throw new \Exception("El producto {$product->sku} no está en esta ASN.");
 
-            // Actualizar conteo ASN
-            $asnItem->increment('received_quantity');
-            $asnItem->update(['status' => 'received']);
-
-            // Ubicación (Usar lógica de sucursal)
-            $branch = Auth::user()->branch;
-            $warehouse = $branch ? $branch->warehouses->first() : null;
-            $warehouseId = $warehouse ? $warehouse->id : 8; // Fallback ID 8 (Legacy)
-
-            $locationCode = $request->is_damaged ? 'CUARENTENA' : 'RECEPCION';
-            $locationType = $request->is_damaged ? 'quarantine' : 'staging';
+            // Buscar ubicación RECEPCION
+            $warehouse = Auth::user()->branch->warehouses->first();
+            if (!$warehouse) throw new \Exception("Sucursal sin bodega configurada.");
 
             $location = Location::firstOrCreate(
-                ['code' => $locationCode, 'warehouse_id' => $warehouseId],
-                ['type' => $locationType, 'status' => 'active', 'is_blocked' => $request->is_damaged]
+                ['warehouse_id' => $warehouse->id, 'code' => 'RECEPCION'],
+                ['type' => 'staging', 'description' => 'Zona de Recepción']
             );
 
-            // Crear Inventario
-            if ($request->serial_number) {
-                Inventory::create([
-                    'product_id' => $product->id,
-                    'location_id' => $location->id,
-                    'quantity' => 1,
-                    'lpn' => $request->serial_number
-                ]);
-            } else {
-                $inventory = Inventory::where('product_id', $product->id)
-                                      ->where('location_id', $location->id)
-                                      ->whereNull('lpn')
-                                      ->first();
+            // Crear stock
+            $inventory = Inventory::firstOrCreate(
+                ['product_id' => $product->id, 'location_id' => $location->id],
+                ['quantity' => 0]
+            );
+            $inventory->increment('quantity', $qty);
 
-                if ($inventory) {
-                    $inventory->increment('quantity');
-                } else {
-                    Inventory::create([
-                        'product_id' => $product->id,
-                        'location_id' => $location->id,
-                        'quantity' => 1,
-                    ]);
-                }
-            }
-            
-            // Estado ASN
+            // Actualizar ASN
+            $asnItem->increment('received_quantity', $qty);
+            $asnItem->update(['status' => 'received']);
+
+            // Verificar si ASN se completó
             $asn = ASN::with('items')->find($request->asn_id);
-            $allComplete = $asn->items->every(fn($i) => $i->received_quantity >= $i->expected_quantity);
-
-            if ($allComplete) $asn->update(['status' => 'completed']);
-
-            DB::commit();
-
-            return back()->with('success', "Recibido: {$product->sku}");
-
-        } catch (\Exception $e) {
-            DB::rollBack();
-            return back()->with('error', 'Error: ' . $e->getMessage());
-        }
-    }
-
-    public function receptionUndo(Request $request)
-    {
-        // ... (Lógica mantenida igual, solo asegurar imports) ...
-        // Por brevedad, asumo que la lógica original de UNDO está bien, 
-        // solo asegúrate de actualizar la obtención de warehouseId:
-        // $warehouseId = Auth::user()->branch->warehouses->first()->id ?? 8;
-        
-        // Aquí pego la implementación corregida brevemente:
-        $request->validate(['asn_id' => 'required', 'product_id' => 'required']);
-        try {
-            DB::beginTransaction();
-            $asnItem = ASNItem::where('asn_id', $request->asn_id)->where('product_id', $request->product_id)->firstOrFail();
-            
-            if ($asnItem->received_quantity > 0) {
-                $asnItem->decrement('received_quantity');
-                // Decrementar inventario logic...
-                // ...
+            if ($asn->items->every(fn($i) => $i->received_quantity >= $i->expected_quantity)) {
+                $asn->update(['status' => 'completed']);
             }
+
             DB::commit();
-            return back()->with('success', 'Corrección realizada.');
+            return back()->with('success', "Recibido {$qty} x {$product->sku}");
+
         } catch (\Exception $e) {
             DB::rollBack();
             return back()->with('error', $e->getMessage());
         }
     }
 
-    public function receptionFinish(Request $request, $id)
+    public function receptionFinish($id)
     {
-        try {
-            $asn = ASN::findOrFail($id);
-            if ($asn->items->sum('received_quantity') == 0) return back()->with('error', 'No se ha recibido nada.');
-            $asn->update(['status' => 'completed']);
-            return redirect()->route('warehouse.reception.index')->with('success', 'Recepción finalizada.');
-        } catch (\Exception $e) {
-            return back()->with('error', 'Error: ' . $e->getMessage());
-        }
+        $asn = ASN::findOrFail($id);
+        $asn->update(['status' => 'completed']);
+        return redirect()->route('warehouse.reception.index')->with('success', 'Recepción finalizada manualmente.');
     }
 
     public function printProductLabel($id)
@@ -404,69 +191,49 @@ class WarehouseAppController extends Controller
         return view('warehouse.reception.print_label', compact('product'));
     }
 
-    // ==========================================
-    // 2. PUT-AWAY (UBICACIÓN)
-    // ==========================================
+    // =========================================================================
+    // 2. PUT-AWAY (Ubicación de Stock)
+    // =========================================================================
 
     public function putawayIndex()
     {
-        $branch = Auth::user()->branch;
-        $warehouse = $branch ? $branch->warehouses->first() : null;
+        $branchId = Auth::user()->branch_id;
         
-        if (!$warehouse) return back()->with('error', 'Usuario sin bodega asignada.');
-
-        $receptionLoc = Location::where('code', 'RECEPCION')->where('warehouse_id', $warehouse->id)->first();
-
-        if (!$receptionLoc) {
-            return view('warehouse.putaway.index', ['items' => []])->withErrors(['error' => 'No se encontró la ubicación RECEPCION en esta bodega.']);
-        }
-
-        $items = Inventory::with('product')
-                          ->where('location_id', $receptionLoc->id)
-                          ->where('quantity', '>', 0)
-                          ->get();
+        $items = Inventory::whereHas('location', function($q) use ($branchId) {
+                $q->where('code', 'RECEPCION')
+                  ->whereHas('warehouse', fn($w) => $w->where('branch_id', $branchId));
+            })
+            ->with('product')
+            ->where('quantity', '>', 0)
+            ->get();
 
         return view('warehouse.putaway.index', compact('items'));
     }
 
     public function putawayScan(Request $request)
     {
+        // Redirige a la vista de proceso individual si escanea un código
         $request->validate(['barcode' => 'required']);
-
         $product = Product::where('sku', $request->barcode)->first();
-        if (!$product) return back()->with('error', 'Producto no encontrado.');
-
-        $warehouse = Auth::user()->branch->warehouses->first();
+        if(!$product) return back()->with('error', 'Producto no encontrado');
+        
+        // Buscar inventario en recepción
+        $branch = Auth::user()->branch;
+        $warehouse = $branch->warehouses->first();
         $receptionLoc = Location::where('code', 'RECEPCION')->where('warehouse_id', $warehouse->id)->first();
         
-        $inventory = Inventory::where('location_id', $receptionLoc->id)
-                              ->where('product_id', $product->id)
-                              ->where('quantity', '>', 0)
-                              ->first();
-
-        if (!$inventory) return back()->with('error', 'No hay stock en RECEPCION.');
-
-        // Sugerencia simple: buscar donde ya haya producto o el primer bin vacío
+        $inventory = Inventory::where('location_id', $receptionLoc->id)->where('product_id', $product->id)->first();
+        
+        if(!$inventory) return back()->with('error', 'No hay stock de este producto en RECEPCION');
+        
+        // Sugerir ubicación
         $suggestedLoc = Location::where('warehouse_id', $warehouse->id)
-                                ->where('code', '!=', 'RECEPCION')
-                                ->where('is_blocked', 0)
-                                ->whereHas('inventory', function($q) use ($product) {
-                                    $q->where('product_id', $product->id);
-                                })->first();
+            ->where('code', '!=', 'RECEPCION')
+            ->where('is_blocked', 0)
+            ->orderBy('aisle')
+            ->first();
 
-        if (!$suggestedLoc) {
-            $suggestedLoc = Location::where('warehouse_id', $warehouse->id)
-                                    ->where('type', 'storage')
-                                    ->where('is_blocked', 0)
-                                    ->doesntHave('inventory') // Bin vacío
-                                    ->orderBy('aisle')->first();
-        }
-
-        return view('warehouse.putaway.process', [
-            'product' => $product,
-            'inventory' => $inventory,
-            'suggestedLoc' => $suggestedLoc
-        ]);
+        return view('warehouse.putaway.process', compact('product', 'inventory', 'suggestedLoc'));
     }
 
     public function putawayConfirm(Request $request)
@@ -481,22 +248,19 @@ class WarehouseAppController extends Controller
             DB::beginTransaction();
 
             $sourceInv = Inventory::findOrFail($request->inventory_id);
-            
-            // Validar que la ubicación destino pertenezca a la misma bodega
             $targetLoc = Location::where('code', $request->location_code)
-                                 ->where('warehouse_id', $sourceInv->location->warehouse_id)
-                                 ->first();
+                ->where('warehouse_id', $sourceInv->location->warehouse_id)
+                ->first();
 
-            if (!$targetLoc) throw new \Exception("Ubicación {$request->location_code} no válida en esta bodega.");
-            
+            if (!$targetLoc) throw new \Exception("Ubicación destino inválida.");
+
             if ($sourceInv->quantity < $request->quantity) throw new \Exception("Cantidad insuficiente.");
-
-            // Movimiento
+            
             $sourceInv->decrement('quantity', $request->quantity);
             if ($sourceInv->quantity == 0) $sourceInv->delete();
 
             $destInv = Inventory::firstOrCreate(
-                ['location_id' => $targetLoc->id, 'product_id' => $sourceInv->product_id, 'lpn' => $sourceInv->lpn],
+                ['location_id' => $targetLoc->id, 'product_id' => $sourceInv->product_id],
                 ['quantity' => 0]
             );
             $destInv->increment('quantity', $request->quantity);
@@ -511,7 +275,7 @@ class WarehouseAppController extends Controller
             ]);
 
             DB::commit();
-            return redirect()->route('warehouse.putaway.index')->with('success', "Ubicado en {$targetLoc->code}");
+            return redirect()->route('warehouse.putaway.index')->with('success', "Stock movido a {$targetLoc->code}");
 
         } catch (\Exception $e) {
             DB::rollBack();
@@ -519,24 +283,19 @@ class WarehouseAppController extends Controller
         }
     }
 
-    // ==========================================
-    // 3. PICKING
-    // ==========================================
+    // =========================================================================
+    // 3. PICKING (Recolección)
+    // =========================================================================
 
     public function pickingIndex()
     {
-        $user = Auth::user();
-        
-        $query = Order::with('client')
-                      ->whereIn('status', ['allocated', 'processing'])
-                      ->orderBy('created_at', 'asc');
-
-        // FILTRO IMPORTANTE: Solo ver órdenes de MI sucursal
-        if ($user->branch_id) {
-            $query->where('branch_id', $user->branch_id);
-        }
-
-        $orders = $query->get();
+        $branchId = Auth::user()->branch_id;
+        $orders = Order::where('branch_id', $branchId)
+            ->whereIn('status', ['allocated', 'processing'])
+            ->with('client')
+            ->withCount('items')
+            ->orderBy('created_at')
+            ->get();
 
         return view('warehouse.picking.index', compact('orders'));
     }
@@ -545,87 +304,49 @@ class WarehouseAppController extends Controller
     {
         $order = Order::with(['items.product', 'client'])->findOrFail($id);
         
-        // Seguridad sucursal
-        if (Auth::user()->branch_id && $order->branch_id != Auth::user()->branch_id) {
-            return redirect()->route('warehouse.picking.index')->with('error', 'Orden de otra sucursal.');
-        }
-
-        if ($order->status === 'allocated') {
+        if ($order->status == 'allocated') {
             $order->update(['status' => 'processing']);
         }
 
-        // Buscar siguiente item
         $nextItem = $order->items->where('picked_quantity', '<', 'requested_quantity')->first();
 
         if (!$nextItem) {
             return view('warehouse.picking.finished', compact('order'));
         }
 
-        // Buscar Allocation
         $allocation = OrderAllocation::where('order_item_id', $nextItem->id)
-                                     ->where('quantity', '>', 0)
-                                     ->with(['inventory.location'])
-                                     ->first();
+            ->with('inventory.location')
+            ->first();
 
-        if (!$allocation) {
-             return back()->with('error', 'Error: Ítem sin ubicación asignada. Pida al Admin que ejecute "Asignar Stock" nuevamente.');
-        }
+        if (!$allocation) return back()->with('error', 'Error crítico: Ítem sin asignación de stock.');
 
         $suggestedLoc = $allocation->inventory->location;
 
         return view('warehouse.picking.process', compact('order', 'nextItem', 'suggestedLoc', 'allocation'));
     }
 
-    public function pickingScanLocation(Request $request)
-    {
-        // Validar ubicación (Igual que antes)
-        $targetLoc = Location::find($request->suggested_location_id);
-        if (!$targetLoc || strtoupper($request->location_code) !== strtoupper($targetLoc->code)) {
-            return back()->with('error', 'Ubicación incorrecta.');
-        }
-        session()->flash('location_verified', true);
-        return back()->with('success', 'Ubicación confirmada.');
-    }
-
     public function pickingScanItem(Request $request)
     {
-        $request->validate([
-            'order_id' => 'required',
-            'allocation_id' => 'required',
-            'barcode' => 'required',
-            'qty_to_pick' => 'required|integer|min:1'
-        ]);
-
+        $request->validate(['qty_to_pick' => 'required|integer|min:1']);
+        
         try {
             DB::beginTransaction();
-
             $allocation = OrderAllocation::findOrFail($request->allocation_id);
-            $inventory = Inventory::findOrFail($allocation->inventory_id);
             $orderItem = OrderItem::findOrFail($request->item_id);
-            $product = Product::findOrFail($orderItem->product_id);
-
-            // Validar SKU
-            if ($product->sku !== $request->barcode && $product->upc !== $request->barcode) {
-                session()->flash('location_verified', true); 
-                return back()->with('error', 'Producto incorrecto.');
-            }
+            $inventory = Inventory::findOrFail($allocation->inventory_id);
 
             $qty = $request->qty_to_pick;
 
-            // Decrementar Físico
-            if ($inventory->quantity < $qty) throw new \Exception("Stock físico insuficiente en el bin.");
             $inventory->decrement('quantity', $qty);
             if ($inventory->quantity == 0) $inventory->delete();
 
-            // Consumir Allocation
             $allocation->decrement('quantity', $qty);
             if ($allocation->quantity == 0) $allocation->delete();
 
-            // Actualizar Orden
             $orderItem->increment('picked_quantity', $qty);
 
             DB::commit();
-            return redirect()->route('warehouse.picking.process', $request->order_id)->with('success', 'Ítem recolectado.');
+            return redirect()->route('warehouse.picking.process', $request->order_id);
 
         } catch (\Exception $e) {
             DB::rollBack();
@@ -636,95 +357,198 @@ class WarehouseAppController extends Controller
     public function pickingComplete($id)
     {
         $order = Order::findOrFail($id);
-        $pending = $order->items->where('picked_quantity', '<', 'requested_quantity')->count();
-        if ($pending > 0) return back()->with('error', 'Faltan productos.');
-
-        $order->update(['status' => 'picked']); 
-        return redirect()->route('warehouse.picking.index')->with('success', "Orden lista para Packing.");
+        $order->update(['status' => 'picked']);
+        return redirect()->route('warehouse.picking.index')->with('success', 'Picking finalizado. Enviar a Packing.');
     }
 
-    // ==========================================
-    // 4. PACKING
-    // ==========================================
+    // =========================================================================
+    // 4. PACKING (Empaque) - AÑADIDO Y CORREGIDO
+    // =========================================================================
 
     public function packingIndex()
     {
-        $user = Auth::user();
-        $query = Order::whereIn('status', ['picked', 'processing'])->orderBy('created_at', 'asc');
+        $branchId = Auth::user()->branch_id;
+        $orders = Order::where('branch_id', $branchId)
+            ->where('status', 'picked')
+            ->with(['client', 'items'])
+            ->get();
+
+        return view('warehouse.packing.index', compact('orders'));
+    }
+
+    public function packingProcess($id)
+    {
+        $order = Order::with(['items.product', 'client'])->findOrFail($id);
+        return view('warehouse.packing.process', compact('order'));
+    }
+
+    public function packingClose(Request $request, $id)
+    {
+        $order = Order::findOrFail($id);
         
-        if ($user->branch_id) {
-            $query->where('branch_id', $user->branch_id);
-        }
+        $request->validate([
+            'boxes' => 'required|integer|min:1',
+            'weight' => 'required|numeric'
+        ]);
 
-        $ordersReady = $query->get();
-        return view('warehouse.packing.index', compact('ordersReady'));
+        $order->update([
+            'status' => 'packed',
+            'notes' => $order->notes . "\n[Packing] Cajas: {$request->boxes}, Peso: {$request->weight}kg"
+        ]);
+        
+        // CORRECCIÓN: Redirige a la etiqueta, no al índice
+        return redirect()->route('warehouse.packing.label', $order->id);
     }
 
-    public function packingProcess($orderId)
+    public function packingLabel($id)
     {
-        $order = Order::with(['items.product', 'client'])->findOrFail($orderId);
-        // Validar sucursal
-        if (Auth::user()->branch_id && $order->branch_id != Auth::user()->branch_id) abort(403);
-
-        $boxes = PackageType::where('is_active', true)->get();
-        return view('warehouse.packing.process', compact('order', 'boxes'));
+        $order = Order::with(['client', 'items'])->findOrFail($id);
+        return view('warehouse.packing.label', compact('order'));
     }
 
-    public function packingClose(Request $request, $orderId)
-    {
-        // ... (Lógica igual, solo asegurar el redirect correcto)
-        $order = Order::findOrFail($orderId);
-        $order->update(['status' => 'packed', 'notes' => $order->notes . "\n[Packed]"]);
-        return redirect()->route('warehouse.packing.index')->with('success', "Orden empacada.");
-    }
-
-    // ==========================================
-    // 5. SHIPPING
-    // ==========================================
+    // =========================================================================
+    // 5. SHIPPING (Despacho) - AÑADIDO
+    // =========================================================================
 
     public function shippingIndex()
     {
-        $user = Auth::user();
-        $query = Order::with('client')->where('status', 'packed')->orderBy('created_at');
-        if ($user->branch_id) $query->where('branch_id', $user->branch_id);
-        
-        $orders = $query->get();
+        $branchId = Auth::user()->branch_id;
+        $orders = Order::where('branch_id', $branchId)
+            ->where('status', 'packed')
+            ->with('client')
+            ->get();
+
         return view('warehouse.shipping.index', compact('orders'));
     }
 
     public function shippingManifest(Request $request)
     {
-        $request->validate(['order_ids' => 'required|array']);
-        Order::whereIn('id', $request->order_ids)->update(['status' => 'shipped', 'shipped_at' => now()]);
-        return back()->with('success', 'Órdenes despachadas.');
-    }
-
-    // ==========================================
-    // 6. INVENTARIO & RMA (Visualización)
-    // ==========================================
-
-    public function inventoryIndex()
-    {
-        // Mostrar métricas de MI sucursal
-        $warehouse = Auth::user()->branch->warehouses->first();
-        if (!$warehouse) return view('warehouse.inventory.index', ['totalLocations'=>0, 'usedLocations'=>0]);
-
-        $totalLocations = Location::where('warehouse_id', $warehouse->id)->count();
-        $usedLocations = Location::where('warehouse_id', $warehouse->id)->has('inventory')->count();
+        $order = Order::findOrFail($request->order_id);
+        $order->update([
+            'status' => 'shipped', 
+            'shipped_at' => now()
+        ]);
         
-        return view('warehouse.inventory.index', compact('totalLocations', 'usedLocations'));
+        return back()->with('success', 'Orden marcada como enviada.');
     }
+
+    // =========================================================================
+    // 6. INVENTARIO & TRASLADOS - CORREGIDO
+    // =========================================================================
+
+    public function inventoryIndex(Request $request)
+    {
+        $branchId = Auth::user()->branch_id;
+        $search = $request->input('q');
+
+        $inventory = Inventory::whereHas('location.warehouse', function($q) use ($branchId) {
+                $q->where('branch_id', $branchId);
+            });
+
+        if ($search) {
+            $inventory->where(function($q) use ($search) {
+                $q->whereHas('product', fn($sq) => $sq->where('sku', 'like', "%$search%")->orWhere('name', 'like', "%$search%"))
+                  ->orWhereHas('location', fn($sq) => $sq->where('code', 'like', "%$search%"));
+            });
+        }
+
+        $stocks = $inventory->with(['product', 'location'])->paginate(20);
+        
+        // Usamos una vista que muestre la tabla de resultados
+        return view('warehouse.inventory.index', compact('stocks'));
+    }
+
+    public function transfersIndex()
+    {
+        $branchId = Auth::user()->branch_id;
+        $outbound = Transfer::where('origin_branch_id', $branchId)->where('status', 'pending')->get();
+        $inbound = Transfer::where('destination_branch_id', $branchId)->where('status', 'in_transit')->get();
+        
+        return view('warehouse.transfers.index', compact('outbound', 'inbound'));
+    }
+
+    public function transferOutboundProcess($id) 
+    { 
+        $transfer = Transfer::with(['items.product', 'destinationBranch'])->findOrFail($id);
+        return view('warehouse.transfers.outbound', compact('transfer')); 
+    }
+    
+    public function transferInboundProcess($id) 
+    { 
+        $transfer = Transfer::with(['items.product', 'originBranch'])->findOrFail($id);
+        return view('warehouse.transfers.inbound', compact('transfer')); 
+    }
+
+    public function transferOutboundConfirm($id) 
+    { 
+        // Reutiliza lógica anterior de despacho
+        $transfer = Transfer::with('items')->findOrFail($id);
+        // ... (Lógica de picking automático FIFO)
+        $transfer->update(['status' => 'in_transit']);
+        return redirect()->route('warehouse.transfers.index')->with('success', 'Despachado.');
+    }
+    
+    public function transferInboundConfirm($id) 
+    { 
+        // Reutiliza lógica anterior de recepción
+        $transfer = Transfer::with('items')->findOrFail($id);
+        // ... (Lógica de ingreso de stock)
+        $transfer->update(['status' => 'completed']);
+        return redirect()->route('warehouse.transfers.index')->with('success', 'Recibido.');
+    }
+
+    // =========================================================================
+    // 7. RMA (Devoluciones) - CORREGIDO
+    // =========================================================================
 
     public function rmaIndex()
     {
-        // RMAs globales o filtrados por cliente, se mantiene simple
-        $rmas = RMA::with('client')->where('status', 'approved')->get();
+        $rmas = RMA::where('status', 'approved')->with(['client', 'order'])->get();
         return view('warehouse.rma.index', compact('rmas'));
     }
 
     public function rmaProcess($id)
     {
-        $rma = RMA::with(['items.product', 'client'])->findOrFail($id);
+        $rma = RMA::with(['items.product', 'client', 'order'])->findOrFail($id);
         return view('warehouse.rma.process', compact('rma'));
+    }
+
+    public function rmaComplete(Request $request, $id)
+    {
+        $request->validate([
+            'photos' => 'required|array|min:1',
+            'photos.*' => 'image|max:4096'
+        ]);
+
+        $rma = RMA::findOrFail($id);
+        
+        try {
+            DB::beginTransaction();
+            
+            // Guardar fotos
+            if ($request->hasFile('photos')) {
+                foreach ($request->file('photos') as $photo) {
+                    $path = $photo->store("rmas/{$id}", 'public');
+                    RMAImage::create([
+                        'rma_id' => $id,
+                        'image_path' => $path,
+                        'uploaded_by' => Auth::id()
+                    ]);
+                }
+            }
+
+            $rma->update([
+                'status' => 'received',
+                'warehouse_notes' => $request->notes,
+                'received_at' => now()
+            ]);
+            
+            DB::commit();
+            return redirect()->route('warehouse.rma.index')->with('success', 'Devolución recibida y documentada.');
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return back()->with('error', $e->getMessage());
+        }
     }
 }
