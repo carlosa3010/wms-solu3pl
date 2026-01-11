@@ -9,11 +9,6 @@ use Symfony\Component\HttpFoundation\Response;
 
 class CheckRole
 {
-    /**
-     * Handle an incoming request.
-     *
-     * @param  \Closure(\Illuminate\Http\Request): (\Symfony\Component\HttpFoundation\Response)  $next
-     */
     public function handle(Request $request, Closure $next, ...$roles): Response
     {
         if (!Auth::check()) {
@@ -22,24 +17,28 @@ class CheckRole
 
         $user = Auth::user();
 
-        // 1. Si el usuario tiene uno de los roles permitidos, pasa.
+        // Si el usuario tiene el rol permitido, adelante
         if (in_array($user->role, $roles)) {
             return $next($request);
         }
 
-        // 2. Si no tiene permiso, lo redirigimos a SU panel correspondiente (evita error 403 feo)
+        // --- LÓGICA DE REDIRECCIÓN SI NO TIENE PERMISO ---
+        
+        // 1. Si es Operador -> Panel Warehouse
         if ($user->role === 'operator') {
-            return redirect()->route('warehouse.dashboard');
+            return redirect()->route('warehouse.index'); // Esta ruta ya existe en web.php
         }
         
+        // 2. Si es Cliente (User) -> Portal
         if ($user->role === 'user') {
             return redirect()->route('client.portal');
         }
 
+        // 3. Si es Admin/Manager -> Panel Admin
         if (in_array($user->role, ['admin', 'manager', 'supervisor'])) {
             return redirect()->route('admin.dashboard');
         }
 
-        return abort(403, 'Acceso no autorizado.');
+        return abort(403);
     }
 }

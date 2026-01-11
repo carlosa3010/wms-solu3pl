@@ -27,11 +27,10 @@ class Product extends Model
         'image_path',
         'min_stock_level',
         'requires_serial_number',
-        // 'is_active', // ELIMINADO: No existe en la base de datos y causaba Error 500
+        // 'is_active', // COMENTADO: No existe en la base de datos actual para evitar Error 500
     ];
 
     protected $casts = [
-        // 'is_active' => 'boolean', // ELIMINADO
         'requires_serial_number' => 'boolean',
         'weight_kg' => 'float',
         'length_cm' => 'float',
@@ -39,7 +38,9 @@ class Product extends Model
         'height_cm' => 'float',
     ];
 
-    // --- RELACIONES ---
+    // ==========================================
+    // RELACIONES
+    // ==========================================
 
     public function client()
     {
@@ -51,6 +52,10 @@ class Product extends Model
         return $this->belongsTo(Category::class);
     }
 
+    /**
+     * Relación con el Inventario Físico.
+     * Fundamental para saber en qué bins está el producto.
+     */
     public function inventory()
     {
         return $this->hasMany(Inventory::class);
@@ -58,14 +63,16 @@ class Product extends Model
 
     /**
      * Relación con los ítems de órdenes.
-     * Vital para calcular el stock comprometido.
+     * Vital para calcular el stock comprometido (reservado).
      */
     public function orderItems()
     {
         return $this->hasMany(OrderItem::class);
     }
 
-    // --- CÁLCULOS DE LÓGICA DE STOCK (WMS CORE) ---
+    // ==========================================
+    // CÁLCULOS DE STOCK (LÓGICA WMS)
+    // ==========================================
 
     /**
      * STOCK FÍSICO: 
@@ -91,12 +98,13 @@ class Product extends Model
         // 1. Obtener ítems de este producto en órdenes vivas
         $items = $this->orderItems()
             ->whereHas('order', function ($q) {
+                // Estados donde el stock está "prometido" pero no despachado
                 $q->whereIn('status', ['pending', 'allocated', 'processing', 'backorder']);
             })
             ->get();
 
         // 2. Calcular cuánto falta por pickear
-        // Solicitado (requested_quantity) - Ya Recolectado (picked_quantity)
+        // Fórmula: Solicitado (requested) - Ya Recolectado (picked)
         return $items->sum(function ($item) {
             $requested = $item->requested_quantity ?? 0;
             $picked = $item->picked_quantity ?? 0;
@@ -118,10 +126,12 @@ class Product extends Model
         return max(0, $physical - $committed);
     }
 
-    // --- OTROS ACCESSORS ---
+    // ==========================================
+    // HELPERS Y ACCESSORS
+    // ==========================================
 
     /**
-     * Volumen en cm3
+     * Volumen en cm3 (Útil para algoritmos de empaque)
      */
     public function getVolumeAttribute()
     {
@@ -129,7 +139,7 @@ class Product extends Model
     }
 
     /**
-     * Alias para compatibilidad con vistas anteriores (Muestra Stock Físico).
+     * Alias para compatibilidad con vistas anteriores.
      */
     public function getTotalStockAttribute()
     {

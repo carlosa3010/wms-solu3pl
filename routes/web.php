@@ -319,8 +319,9 @@ Route::middleware(['auth'])->group(function () {
     // =========================================================================
     Route::middleware(['role:operator,admin'])->prefix('warehouse')->name('warehouse.')->group(function () {
         
-        // Dashboard y Lookup Global
-        Route::get('/', [WarehouseAppController::class, 'index'])->name('dashboard');
+        // CORRECCIÓN CLAVE: El nombre es 'index' para que el redirect desde AuthController y Middleware funcione.
+        Route::get('/', [WarehouseAppController::class, 'index'])->name('index'); 
+        
         Route::get('/lookup', [WarehouseAppController::class, 'lookup'])->name('lookup');
 
         // 1. Recepción (Inbound Externo / Proveedores)
