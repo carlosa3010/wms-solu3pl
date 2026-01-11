@@ -14,6 +14,7 @@ class Order extends Model
         'external_ref',
         'client_id',
         'branch_id',
+        'transfer_id', // NUEVO: Vinculación con traslado automático
         'customer_name',
         'customer_id_number',
         'customer_email',
@@ -25,11 +26,13 @@ class Order extends Model
         'country',
         'shipping_method',
         'status',
+        'is_backorder', // NUEVO: Bandera de "Sin Stock Local"
         'notes',
     ];
 
     protected $casts = [
         'is_premium_packing' => 'boolean',
+        'is_backorder' => 'boolean', // Casting automático
         'shipped_at' => 'datetime'
     ];
 
@@ -49,7 +52,16 @@ class Order extends Model
     }
 
     /**
-     * CORRECCIÓN: Relación para acceder a las reservaciones de stock
+     * Relación con el Traslado Automático (Logística de Reabastecimiento).
+     * Si la orden requiere stock de otra sucursal, aquí se vincula el movimiento.
+     */
+    public function transfer()
+    {
+        return $this->belongsTo(Transfer::class);
+    }
+
+    /**
+     * Relación para acceder a las reservaciones de stock (Allocation)
      * a través de los items de la orden.
      */
     public function allocations()

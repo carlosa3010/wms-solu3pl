@@ -15,14 +15,16 @@ class User extends Authenticatable
      * Los atributos que son asignables masivamente.
      * Se incluye 'permissions' para el manejo de módulos del Supervisor.
      * Se incluye 'status' para manejar el estado activo/inactivo del usuario.
+     * Se incluye 'branch_id' para limitar el acceso del operario a una sucursal.
      */
     protected $fillable = [
         'name',
         'email',
         'password',
         'client_id',
+        'branch_id', // NUEVO: Vinculación a Sucursal
         'role',
-        'status', // AGREGADO: Importante para que el update/create funcione
+        'status',
         'permissions',
         'can_manage_billing',
         'can_manage_users',
@@ -49,11 +51,20 @@ class User extends Authenticatable
     ];
 
     /**
-     * Relación con el cliente vinculado.
+     * Relación con el cliente vinculado (Para usuarios externos/clientes).
      */
     public function client()
     {
         return $this->belongsTo(Client::class, 'client_id');
+    }
+
+    /**
+     * Relación con la sucursal asignada (Para usuarios internos/operarios).
+     * Si es NULL, se considera un usuario con acceso Global (como el Super Admin).
+     */
+    public function branch()
+    {
+        return $this->belongsTo(Branch::class, 'branch_id');
     }
     
     /**
@@ -62,6 +73,15 @@ class User extends Authenticatable
     public function isAdmin()
     {
         return $this->role === 'admin';
+    }
+
+    /**
+     * Helper para saber si el usuario tiene visión global de todas las bodegas.
+     * Retorna true si es Admin o si no tiene una sucursal forzada.
+     */
+    public function isGlobal()
+    {
+        return $this->isAdmin() || is_null($this->branch_id);
     }
 
     /**

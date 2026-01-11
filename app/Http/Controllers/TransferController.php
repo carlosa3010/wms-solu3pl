@@ -10,6 +10,7 @@ use App\Models\StockMovement;
 use App\Models\Location;
 use App\Models\Branch;
 use App\Models\Product;
+use App\Models\Order; // Necesario para actualizar órdenes en espera
 use App\Services\BinAllocator;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
@@ -22,222 +23,293 @@ class TransferController extends Controller
      */
     public function index()
     {
-        // Se asume que TransferItem tiene la relación 'targetLocation' definida
-        $transfers = Transfer::with(['originBranch', 'destinationBranch', 'items.product', 'items.targetLocation'])
-            ->orderBy('created_at', 'desc')
-            ->paginate(15);
+        $user = Auth::user();
+
+        $query = Transfer::with(['originBranch', 'destinationBranch', 'items.product', 'items.targetLocation'])
+            ->orderBy('created_at', 'desc');
+
+        // Filtro por sucursal para operarios
+        if ($user->branch_id) {
+            $query->where(function($q) use ($user) {
+                $q->where('origin_branch_id', $user->branch_id)
+                  ->orWhere('destination_branch_id', $user->branch_id);
+            });
+        }
+
+        $transfers = $query->paginate(15);
 
         return view('admin.operations.transfers.index', compact('transfers'));
     }
 
     public function create()
     {
-        $branches = Branch::with('warehouses')->where('is_active', true)->get();
-        // Solo productos con stock físico
-        $products = Product::whereHas('inventory', function($q){
-            $q->where('quantity', '>', 0);
-        })->orderBy('sku')->get();
+        $user = Auth::user();
 
-        return view('admin.operations.transfers.create', compact('branches', 'products'));
+        // Si es admin global ve todas, si es operario solo su sucursal (como origen)
+        if ($user->branch_id) {
+            $branches = Branch::where('id', $user->branch_id)->with('warehouses')->get();
+            $allBranches = Branch::where('is_active', true)->get(); // Para destino
+        } else {
+            $branches = Branch::with('warehouses')->where('is_active', true)->get();
+            $allBranches = $branches;
+        }
+
+        // Productos con stock (optimizado)
+        $products = Product::where('is_active', true)->orderBy('sku')->get();
+
+        return view('admin.operations.transfers.create', compact('branches', 'allBranches', 'products'));
     }
 
     /**
-     * Crea un traslado manual.
+     * Crea un traslado (Manual o Interno).
      */
     public function store(Request $request)
     {
         $request->validate([
             'origin_branch_id' => 'required|exists:branches,id',
-            'destination_branch_id' => 'required|exists:branches,id|different:origin_branch_id',
+            'destination_branch_id' => 'required|exists:branches,id', // Se eliminó 'different' para permitir internos
             'items' => 'required|array|min:1',
+            'items.*.quantity' => 'required|integer|min:1'
         ]);
 
         try {
-            DB::transaction(function () use ($request) {
-                // 1. Crear Cabecera
-                $transfer = Transfer::create([
-                    'origin_branch_id' => $request->origin_branch_id,
-                    'destination_branch_id' => $request->destination_branch_id,
-                    'transfer_number' => 'TR-' . strtoupper(Str::random(8)),
-                    'status' => 'pending',
-                    'notes' => $request->notes ?? 'Traslado Manual',
-                    'created_by' => Auth::id()
-                ]);
+            DB::beginTransaction();
 
-                // Instancia del servicio de inteligencia (si existe)
-                // Si no tienes BinAllocator, usa lógica simple o null
-                $allocator = class_exists(BinAllocator::class) ? new BinAllocator() : null;
+            // 1. Determinar Tipo de Traslado
+            $type = ($request->origin_branch_id == $request->destination_branch_id) 
+                ? Transfer::TYPE_INTERNAL 
+                : Transfer::TYPE_INTER_BRANCH;
+
+            // 2. Crear Cabecera
+            $transfer = Transfer::create([
+                'origin_branch_id' => $request->origin_branch_id,
+                'destination_branch_id' => $request->destination_branch_id,
+                'transfer_number' => 'TR-' . strtoupper(Str::random(8)),
+                'status' => 'pending',
+                'type' => $type,
+                'notes' => $request->notes ?? ($type == Transfer::TYPE_INTERNAL ? 'Movimiento Interno' : 'Traslado entre Sucursales'),
+                'created_by' => Auth::id()
+            ]);
+
+            $destBranch = Branch::with('warehouses')->find($request->destination_branch_id);
+            $destWarehouse = $destBranch->warehouses->first(); 
+            $allocator = class_exists(BinAllocator::class) ? new BinAllocator() : null;
+
+            // 3. Procesar Items
+            foreach ($request->items as $itemData) {
+                $product = Product::find($itemData['product_id']);
                 
-                $destBranch = Branch::with('warehouses')->find($request->destination_branch_id);
-                $destWarehouse = $destBranch->warehouses->first(); // Asumiendo 1 almacén por branch principal
-
-                // 2. Procesar Items
-                foreach ($request->items as $itemData) {
-                    $product = Product::find($itemData['product_id']);
-                    
-                    // Sugerir bin destino desde la creación si el servicio existe
-                    $targetLocationId = null;
-                    if ($allocator && $destWarehouse) {
-                        $targetLocationId = $allocator->getBestLocationForProduct($product, $destWarehouse);
-                    }
-
-                    // A. Validar Stock Origen (Simple check)
-                    // La validación real ocurre en el momento del 'ship' (picking), 
-                    // pero es bueno prevenir aquí.
-                    $stockEnOrigen = Inventory::where('product_id', $product->id)
-                        ->whereHas('location.warehouse', function($q) use ($request) {
-                            $q->where('branch_id', $request->origin_branch_id);
-                        })->sum('quantity');
-
-                    if ($stockEnOrigen < $itemData['quantity']) {
-                        throw new \Exception("Stock insuficiente en origen para {$product->sku}. Disponible: {$stockEnOrigen}");
-                    }
-
-                    TransferItem::create([
-                        'transfer_id' => $transfer->id,
-                        'product_id' => $product->id,
-                        'quantity' => $itemData['quantity'],
-                        'target_location_id' => $targetLocationId // Puede ser null
-                    ]);
+                // Sugerir bin destino (si existe lógica de inteligencia)
+                $targetLocationId = null;
+                if ($allocator && $destWarehouse) {
+                    $res = $allocator->getBestLocationForProduct($product, $destWarehouse);
+                    $targetLocationId = is_array($res) ? $res['location_id'] : $res;
                 }
-            });
 
-            return redirect()->route('admin.transfers.index')->with('success', 'Traslado registrado correctamente.');
+                // Validar Stock en Origen (Simple Check)
+                $stockEnOrigen = Inventory::where('product_id', $product->id)
+                    ->whereHas('location.warehouse', function($q) use ($request) {
+                        $q->where('branch_id', $request->origin_branch_id);
+                    })->sum('quantity');
+
+                if ($stockEnOrigen < $itemData['quantity']) {
+                    throw new \Exception("Stock insuficiente en origen para {$product->sku}. Disponible: {$stockEnOrigen}");
+                }
+
+                TransferItem::create([
+                    'transfer_id' => $transfer->id,
+                    'product_id' => $product->id,
+                    'quantity' => $itemData['quantity'],
+                    'target_location_id' => $targetLocationId 
+                ]);
+            }
+
+            DB::commit();
+
+            // Si es interno, podríamos redirigir a una vista diferente o procesarlo directo si se desea.
+            // Por ahora mantenemos el flujo estándar: Crear -> Despachar (Sacar de bin) -> Recibir (Poner en bin)
+            // Incluso en movimiento interno tiene sentido para asegurar que el operario fue al bin A y puso en bin B.
+            
+            return redirect()->route('admin.transfers.index')
+                ->with('success', "Traslado {$transfer->transfer_number} ({$type}) creado correctamente.");
+
         } catch (\Exception $e) {
+            DB::rollBack();
             return back()->withInput()->withErrors(['error' => 'Error al crear el traslado: ' . $e->getMessage()]);
         }
     }
 
     /**
-     * Despacho: Picking multi-bin en origen.
-     * Mueve el stock de "Inventario" a "En Tránsito" (Lógica Lógica).
+     * Despacho: Picking en origen.
+     * Mueve el stock de "Inventario Físico" a "En Tránsito".
      */
     public function ship($id)
     {
         $transfer = Transfer::with('items.product')->findOrFail($id);
-        if ($transfer->status !== 'pending') return back()->with('error', 'El traslado no está listo para despacho.');
+        
+        if ($transfer->status !== 'pending') {
+            return back()->with('error', 'El traslado no está listo para despacho.');
+        }
 
         try {
-            DB::transaction(function () use ($transfer) {
-                foreach ($transfer->items as $item) {
-                    $needed = $item->quantity;
-                    
-                    // Buscar stock FIFO en la sucursal de origen
-                    $inventories = Inventory::where('product_id', $item->product_id)
-                        ->where('quantity', '>', 0)
-                        ->whereHas('location.warehouse', function ($q) use ($transfer) {
-                            $q->where('branch_id', $transfer->origin_branch_id);
-                        })
-                        ->orderBy('created_at', 'asc') // FIFO
-                        ->get();
+            DB::beginTransaction();
 
-                    if ($inventories->sum('quantity') < $needed) {
-                        throw new \Exception("Stock total insuficiente en origen para SKU: {$item->product->sku}");
-                    }
+            foreach ($transfer->items as $item) {
+                $needed = $item->quantity;
+                
+                // Buscar stock FIFO en la sucursal de origen
+                $inventories = Inventory::where('product_id', $item->product_id)
+                    ->where('quantity', '>', 0)
+                    ->whereHas('location.warehouse', function ($q) use ($transfer) {
+                        $q->where('branch_id', $transfer->origin_branch_id);
+                    })
+                    ->orderBy('created_at', 'asc') // FIFO
+                    ->get();
 
-                    // Picking multi-bin
-                    foreach ($inventories as $inv) {
-                        if ($needed <= 0) break;
-                        
-                        $take = min($needed, $inv->quantity);
-                        $inv->decrement('quantity', $take);
-                        
-                        // Si queda en 0, se elimina la fila de inventario
-                        if ($inv->quantity == 0) $inv->delete();
-                        
-                        StockMovement::create([
-                            'product_id' => $item->product_id,
-                            'from_location_id' => $inv->location_id,
-                            'quantity' => $take,
-                            'reason' => 'Salida por Traslado #' . $transfer->transfer_number,
-                            'reference_number' => $transfer->transfer_number,
-                            'user_id' => Auth::id()
-                        ]);
-                        $needed -= $take;
-                    }
+                if ($inventories->sum('quantity') < $needed) {
+                    throw new \Exception("Stock total insuficiente en origen para SKU: {$item->product->sku}");
                 }
-                $transfer->update(['status' => 'in_transit']);
-            });
-            return back()->with('success', 'Traslado despachado exitosamente.');
+
+                // Picking (Consumo de inventario origen)
+                foreach ($inventories as $inv) {
+                    if ($needed <= 0) break;
+                    
+                    $take = min($needed, $inv->quantity);
+                    $inv->decrement('quantity', $take);
+                    
+                    // Si queda en 0, eliminamos la fila para limpiar DB
+                    if ($inv->quantity <= 0) $inv->delete();
+                    
+                    // Registro de Movimiento (Kardex)
+                    StockMovement::create([
+                        'product_id' => $item->product_id,
+                        'from_location_id' => $inv->location_id,
+                        'quantity' => $take,
+                        'reason' => 'Salida por Traslado #' . $transfer->transfer_number,
+                        'reference_number' => $transfer->transfer_number,
+                        'user_id' => Auth::id()
+                    ]);
+                    
+                    $needed -= $take;
+                }
+            }
+
+            $transfer->update(['status' => 'in_transit']);
+
+            DB::commit();
+            
+            // Si es interno, el mensaje cambia ligeramente
+            $msg = $transfer->isInternal() ? 'Producto retirado del origen. Proceda a ubicar en destino.' : 'Traslado despachado. Mercancía en tránsito.';
+            
+            return back()->with('success', $msg);
+
         } catch (\Exception $e) {
+            DB::rollBack();
             return back()->with('error', 'Error en despacho: ' . $e->getMessage());
         }
     }
 
     /**
      * Recepción: Put-away en destino.
+     * Mueve de "En Tránsito" a "Inventario Destino" y Libera Órdenes.
      */
     public function receive(Request $request, $id)
     {
         $transfer = Transfer::with(['items.product', 'destinationBranch.warehouses'])->findOrFail($id);
-        if ($transfer->status !== 'in_transit') return back()->with('error', 'El traslado debe estar en tránsito para ser recibido.');
+        
+        if ($transfer->status !== 'in_transit') {
+            return back()->with('error', 'El traslado debe estar en tránsito para ser recibido.');
+        }
 
         try {
-            DB::transaction(function () use ($transfer, $request) {
-                // Instancia opcional del allocator
-                $allocator = class_exists(BinAllocator::class) ? new BinAllocator() : null;
+            DB::beginTransaction();
+            
+            $warehouse = $transfer->destinationBranch->warehouses->first();
+            if (!$warehouse) throw new \Exception("La sucursal destino no tiene almacén configurado.");
 
-                foreach ($transfer->items as $item) {
-                    $warehouse = $transfer->destinationBranch->warehouses->first();
-                    // Si no hay warehouse definido en destino, fallar o usar default
-                    if (!$warehouse) throw new \Exception("La sucursal destino no tiene almacén configurado.");
+            // Instancia opcional del allocator
+            $allocator = class_exists(BinAllocator::class) ? new BinAllocator() : null;
 
-                    $qtyRemaining = $item->quantity;
+            foreach ($transfer->items as $item) {
+                $qtyRemaining = $item->quantity;
+                $targetLocationId = null;
 
-                    // Lógica simplificada de recepción (todo a un bin o bin sugerido)
-                    // Si se quiere multi-bin complex, se requiere bucle while.
-                    // Aquí usamos una versión directa para asegurar estabilidad.
+                // 1. Selección manual
+                if ($request->location_id) {
+                    $targetLocationId = $request->location_id;
+                } 
+                // 2. Pre-asignado en la creación
+                elseif ($item->target_location_id) {
+                    $targetLocationId = $item->target_location_id;
+                }
+                // 3. Inteligencia (BinAllocator)
+                elseif ($allocator) {
+                    $res = $allocator->getBestLocationForProduct($item->product, $warehouse);
+                    $targetLocationId = is_array($res) ? $res['location_id'] : $res;
+                }
 
-                    $targetLocationId = null;
+                // 4. Fallback: Buscar cualquier ubicación 'storage' vacía o general
+                if (!$targetLocationId) {
+                    $loc = Location::where('warehouse_id', $warehouse->id)
+                        ->where('is_blocked', false)
+                        ->orderBy('id')
+                        ->first();
+                    $targetLocationId = $loc ? $loc->id : null;
+                }
 
-                    // 1. Selección manual del request (si aplica a todos los items, cuidado)
-                    if ($request->location_id) {
-                        $targetLocationId = $request->location_id;
-                    } 
-                    // 2. Pre-asignado en la creación
-                    elseif ($item->target_location_id) {
-                        $targetLocationId = $item->target_location_id;
-                    }
-                    // 3. Inteligencia
-                    elseif ($allocator) {
-                        $res = $allocator->getBestLocationForProduct($item->product, $warehouse);
-                        $targetLocationId = is_array($res) ? $res['location_id'] : $res;
-                    }
+                if (!$targetLocationId) {
+                    throw new \Exception("No hay ubicación disponible para recibir {$item->product->sku}");
+                }
 
-                    // 4. Fallback: Buscar cualquier ubicación 'storage' vacía o con el mismo producto
-                    if (!$targetLocationId) {
-                        $loc = Location::where('warehouse_id', $warehouse->id)
-                            ->where('is_blocked', false)
-                            ->orderBy('id')
-                            ->first();
-                        $targetLocationId = $loc ? $loc->id : null;
-                    }
+                // Crear/Incrementar Inventario en destino
+                $inv = Inventory::firstOrCreate(
+                    ['product_id' => $item->product_id, 'location_id' => $targetLocationId],
+                    ['quantity' => 0]
+                );
+                $inv->increment('quantity', $qtyRemaining);
 
-                    if (!$targetLocationId) {
-                        throw new \Exception("No hay ubicación disponible para recibir {$item->product->sku}");
-                    }
+                // Registrar Kardex
+                StockMovement::create([
+                    'product_id' => $item->product_id,
+                    'to_location_id' => $targetLocationId,
+                    'quantity' => $qtyRemaining,
+                    'reason' => 'Entrada por Recepción de Traslado #' . $transfer->transfer_number,
+                    'reference_number' => $transfer->transfer_number,
+                    'user_id' => Auth::id()
+                ]);
+            }
 
-                    // Crear Inventario en destino
-                    $inv = Inventory::firstOrCreate(
-                        ['product_id' => $item->product_id, 'location_id' => $targetLocationId],
-                        ['quantity' => 0]
-                    );
-                    $inv->increment('quantity', $qtyRemaining);
+            $transfer->update(['status' => 'completed']);
 
-                    // Registrar Kardex
-                    StockMovement::create([
-                        'product_id' => $item->product_id,
-                        'to_location_id' => $targetLocationId,
-                        'quantity' => $qtyRemaining,
-                        'reason' => 'Entrada por Recepción de Traslado #' . $transfer->transfer_number,
-                        'reference_number' => $transfer->transfer_number,
-                        'user_id' => Auth::id()
+            // ---------------------------------------------------------
+            // CRÍTICO: Liberar Órdenes en Espera (Cross-Docking / Backorders)
+            // ---------------------------------------------------------
+            // Buscamos órdenes que estén esperando ESTE traslado específicamente
+            $ordersWaiting = Order::where('transfer_id', $transfer->id)
+                                  ->where('status', 'waiting_transfer')
+                                  ->get();
+
+            if ($ordersWaiting->count() > 0) {
+                foreach ($ordersWaiting as $order) {
+                    // Cambiamos estado a 'pending' para que aparezca en el Picking
+                    $order->update([
+                        'status' => 'pending',
+                        'notes' => $order->notes . " [Stock recibido via TR-{$transfer->transfer_number}]"
                     ]);
                 }
-                $transfer->update(['status' => 'completed']);
-            });
-            return redirect()->route('admin.transfers.index')->with('success', 'Mercancía recibida correctamente.');
+            }
+
+            DB::commit();
+            
+            $msg = 'Mercancía recibida correctamente.';
+            if ($ordersWaiting->count() > 0) {
+                $msg .= " Se han liberado {$ordersWaiting->count()} pedido(s) para picking.";
+            }
+
+            return redirect()->route('admin.transfers.index')->with('success', $msg);
+
         } catch (\Exception $e) {
+            DB::rollBack();
             return back()->with('error', 'Error en recepción: ' . $e->getMessage());
         }
     }

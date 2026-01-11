@@ -7,6 +7,7 @@ use App\Services\BinAllocator;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Auth;
 
 class PickingController extends Controller
 {
@@ -23,10 +24,18 @@ class PickingController extends Controller
      */
     public function index(Request $request)
     {
-        // Solo buscamos órdenes que requieren acción (pending o backorder)
+        $user = Auth::user();
+        
+        // Solo buscamos órdenes que requieren acción inmediata (pending o backorder)
+        // EXCLUIMOS: 'waiting_transfer' (porque el stock no ha llegado)
         $query = Order::with(['client', 'items.product', 'branch'])
             ->whereIn('status', ['pending', 'backorder']) 
-            ->orderBy('created_at', 'asc'); // FIFO: Los pedidos más viejos primero
+            ->orderBy('created_at', 'asc'); // FIFO
+
+        // Filtro: Si es operario de almacén (limitado a su sucursal)
+        if ($user->branch_id) {
+            $query->where('branch_id', $user->branch_id);
+        }
 
         // Filtro por Cliente
         if ($request->has('client_id') && !empty($request->client_id)) {
@@ -45,14 +54,23 @@ class PickingController extends Controller
 
     /**
      * Asignación Individual (Single Picking).
-     * Ejecuta la lógica de "Hard Allocation": Busca bines y reserva stock físico.
      */
     public function allocateSingle($id)
     {
         try {
             $order = Order::findOrFail($id);
+            $user = Auth::user();
 
-            // Validar estado antes de procesar
+            // Validar permiso de sucursal
+            if ($user->branch_id && $order->branch_id !== $user->branch_id) {
+                return back()->with('error', 'No tienes permiso para procesar órdenes de otra sucursal.');
+            }
+
+            // Validar estado (No permitir picking si espera traslado)
+            if ($order->status === 'waiting_transfer') {
+                return back()->with('warning', 'Esta orden espera stock de otra sucursal. Debe recibir el traslado primero.');
+            }
+
             if (!in_array($order->status, ['pending', 'backorder'])) {
                 return back()->with('error', 'La orden ya fue procesada o no está pendiente.');
             }
@@ -60,18 +78,15 @@ class PickingController extends Controller
             DB::beginTransaction();
             
             // Llamamos al Servicio de Inteligencia (BinAllocator)
-            // Este servicio debe:
-            // 1. Buscar inventario FIFO.
-            // 2. Crear registros en 'order_allocations'.
-            // 3. Actualizar estado a 'allocated'.
+            // Este servicio validará el stock LOCAL de la sucursal de la orden
             $result = $this->allocator->allocateOrder($order);
             
             DB::commit();
 
             if ($result) {
-                return back()->with('success', "Orden #{$order->order_number} asignada correctamente. Lista para el operador.");
+                return back()->with('success', "Orden #{$order->order_number} asignada correctamente. Stock reservado.");
             } else {
-                return back()->with('warning', "Orden #{$order->order_number} procesada parcialmente (Backorder) o sin stock suficiente.");
+                return back()->with('warning', "Orden #{$order->order_number} no pudo completarse. Stock insuficiente en esta bodega.");
             }
 
         } catch (\Exception $e) {
@@ -83,7 +98,6 @@ class PickingController extends Controller
 
     /**
      * Asignación por Ola (Wave Picking).
-     * Procesa múltiples órdenes en lote para eficiencia.
      */
     public function createWave(Request $request)
     {
@@ -93,16 +107,23 @@ class PickingController extends Controller
         ]);
 
         try {
+            $user = Auth::user();
             $processedCount = 0;
             $failedCount = 0;
             
-            // Cargamos las órdenes seleccionadas
-            $orders = Order::whereIn('id', $request->order_ids)
-                           ->whereIn('status', ['pending', 'backorder']) // Doble check de seguridad
-                           ->get();
+            // Cargamos las órdenes
+            $query = Order::whereIn('id', $request->order_ids)
+                          ->whereIn('status', ['pending', 'backorder']); // Excluir waiting_transfer
+
+            // Filtro de seguridad por sucursal
+            if ($user->branch_id) {
+                $query->where('branch_id', $user->branch_id);
+            }
+
+            $orders = $query->get();
 
             if ($orders->isEmpty()) {
-                return back()->with('error', 'Ninguna de las órdenes seleccionadas es válida para Picking.');
+                return back()->with('error', 'Ninguna de las órdenes seleccionadas es válida para Picking en tu sucursal.');
             }
 
             DB::beginTransaction();
@@ -112,7 +133,6 @@ class PickingController extends Controller
                     if ($this->allocator->allocateOrder($order)) {
                         $processedCount++;
                     } else {
-                        // Si el allocator devuelve false, es porque faltó stock (Backorder)
                         $failedCount++;
                     }
                 } catch (\Exception $innerEx) {
@@ -125,7 +145,7 @@ class PickingController extends Controller
 
             $msg = "Ola completada. {$processedCount} órdenes asignadas exitosamente.";
             if ($failedCount > 0) {
-                $msg .= " {$failedCount} órdenes quedaron en espera por falta de stock.";
+                $msg .= " {$failedCount} órdenes no pudieron asignarse por falta de stock local.";
                 return back()->with('warning', $msg);
             }
 

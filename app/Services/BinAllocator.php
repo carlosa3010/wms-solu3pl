@@ -8,6 +8,7 @@ use App\Models\Location;
 use App\Models\Inventory;
 use App\Models\Order;
 use App\Models\OrderAllocation;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class BinAllocator
@@ -21,6 +22,7 @@ class BinAllocator
         $asn->load('items.product');
 
         // Buscar ubicaciones vacías con tipo de bin definido
+        // Aquí podrías filtrar por warehouse si ASN tuviera warehouse_id
         $emptyLocations = Location::whereDoesntHave('stock', function($q) {
                 $q->where('quantity', '>', 0);
             })
@@ -65,7 +67,7 @@ class BinAllocator
                 ]);
 
                 $qtyToAllocate -= $qtyForThisBin;
-                $emptyLocations->forget($key);
+                // $emptyLocations->forget($key); // Opcional: Si queremos llenar un solo bin por producto
             }
         }
     }
@@ -74,117 +76,130 @@ class BinAllocator
      * Lógica para SALIDAS (Picking / Pedidos):
      * Busca inventario existente (FIFO) para reservar stock.
      */
-    public function allocateOrder($order)
+    public function allocateOrder(Order $order)
     {
-        $allocatedAny = false;
+        $allAllocated = true;
 
+        // Iterar sobre los items de la orden que faltan por asignar
         foreach ($order->items as $item) {
-            // Si ya está completo, saltar
-            if ($item->allocated_quantity >= $item->requested_quantity) {
-                continue;
-            }
-
-            $qtyNeeded = $item->requested_quantity - $item->allocated_quantity;
+            // Calcular cuánto falta por reservar. 
+            // Usamos 'picked_quantity' como referencia base si no hay columna 'allocated'
+            // Pero idealmente deberíamos calcular sum(allocations)
             
-            // FIFO: Buscar inventario más antiguo primero
-            // Asumimos que Inventory tiene relación con Product y Location
-            $inventoryBatches = Inventory::where('product_id', $item->product_id)
+            $alreadyAllocated = OrderAllocation::where('order_item_id', $item->id)->sum('quantity');
+            $needed = $item->requested_quantity - $alreadyAllocated;
+
+            if ($needed <= 0) continue;
+
+            // 1. Buscar Inventario Disponible (FIFO) en la SUCURSAL de la orden
+            $inventories = Inventory::where('product_id', $item->product_id)
                 ->where('quantity', '>', 0)
-                ->orderBy('created_at', 'asc') // FIFO
+                ->whereHas('location.warehouse', function($q) use ($order) {
+                    // FILTRO CRÍTICO: Solo inventario de la sucursal de la orden
+                    $q->where('branch_id', $order->branch_id)
+                      ->where('is_blocked', false);
+                })
+                ->whereDoesntHave('location', function($q) {
+                    // Excluir ubicaciones de sistema (Cuarentena, Recepción, etc)
+                    // Asumiendo que 'storage' es el tipo correcto para picking
+                    $q->whereIn('type', ['quarantine', 'staging']);
+                })
+                ->orderBy('created_at', 'asc') // FIFO (First In, First Out)
                 ->get();
 
-            if ($inventoryBatches->isEmpty()) {
-                continue;
-            }
+            // 2. Iterar y Reservar (Hard Allocation)
+            foreach ($inventories as $inv) {
+                if ($needed <= 0) break;
 
-            foreach ($inventoryBatches as $batch) {
-                if ($qtyNeeded <= 0) break;
+                // Calcular stock real disponible en el bin (Físico - Reservado por otros)
+                $committed = OrderAllocation::where('inventory_id', $inv->id)->sum('quantity');
+                $availableInBin = $inv->quantity - $committed;
 
-                $qtyToTake = min($qtyNeeded, $batch->quantity);
+                if ($availableInBin <= 0) continue;
 
-                // Crear reserva (Allocation)
+                $take = min($needed, $availableInBin);
+
+                // Crear Reserva
                 OrderAllocation::create([
+                    'order_id' => $order->id,
                     'order_item_id' => $item->id,
-                    'location_id'   => $batch->location_id,
-                    'quantity'      => $qtyToTake
+                    'inventory_id' => $inv->id,
+                    'quantity' => $take
                 ]);
 
-                // Descontar del inventario físico disponible
-                $batch->quantity -= $qtyToTake;
-                $batch->save();
-
-                // Actualizar item
-                $item->allocated_quantity += $qtyToTake;
-                $qtyNeeded -= $qtyToTake;
-                $allocatedAny = true;
+                $needed -= $take;
             }
 
-            $item->save();
+            if ($needed > 0) {
+                $allAllocated = false;
+            }
         }
 
-        $this->updateOrderStatus($order);
-
-        return $allocatedAny;
-    }
-
-    private function updateOrderStatus($order)
-    {
-        $order->refresh();
-        $totalRequested = $order->items->sum('requested_quantity');
-        $totalAllocated = $order->items->sum('allocated_quantity');
-
-        if ($totalAllocated >= $totalRequested) {
-            $order->status = 'allocated'; // Listo para picking
-        } elseif ($totalAllocated > 0) {
-            $order->status = 'allocated'; // Parcialmente asignado (o usar 'partial')
+        // Actualizar Estado de la Orden
+        if ($allAllocated) {
+            $order->update(['status' => 'allocated']);
+        } else {
+            // Si se reservó algo pero no todo, es Backorder
+            $hasAllocations = OrderAllocation::where('order_id', $order->id)->exists();
+            if ($hasAllocations) {
+                $order->update(['status' => 'backorder']);
+            }
+            // Si no se reservó nada, se queda en 'pending' o pasa a 'backorder' total
         }
-        
-        $order->save();
+
+        return $allAllocated;
     }
+
     /**
      * Lógica para ANULAR (Release Stock):
-     * Devuelve el stock reservado al inventario disponible y pone en 0 la orden.
+     * Libera las reservas (Allocations) sin afectar el stock físico (porque nunca salió).
      */
     public function deallocateOrder(Order $order)
     {
-        // 1. Cargar relaciones necesarias
-        $order->load('items.allocations');
+        // Solo eliminamos las reservas. El stock físico sigue en el Inventory.
+        OrderAllocation::where('order_id', $order->id)->delete();
 
-        foreach ($order->items as $item) {
-            // Si no tiene nada asignado, saltamos
-            if ($item->allocated_quantity <= 0) continue;
+        // Marcar orden como cancelada
+        $order->update(['status' => 'cancelled']);
+    }
 
-            foreach ($item->allocations as $allocation) {
-                // 2. Buscar si existe inventario en esa ubicación para ese producto
-                $inventory = Inventory::where('product_id', $item->product_id)
-                    ->where('location_id', $allocation->location_id)
-                    ->first();
+    /**
+     * Sugiere la mejor ubicación para GUARDAR (Put-away) un producto.
+     * Usado en Recepción y Traslados.
+     */
+    public function getBestLocationForProduct($product, $warehouse)
+    {
+        // 1. Estrategia: Agrupar (Buscar donde ya exista el mismo producto)
+        $existingLoc = Inventory::where('product_id', $product->id)
+            ->whereHas('location', function($q) use ($warehouse) {
+                $q->where('warehouse_id', $warehouse->id)
+                  ->where('type', 'storage')
+                  ->where('is_blocked', false);
+            })
+            ->orderBy('quantity', 'desc') // Llenar el que tenga más primero
+            ->first();
 
-                if ($inventory) {
-                    // Si existe, sumamos la cantidad
-                    $inventory->quantity += $allocation->quantity;
-                    $inventory->save();
-                } else {
-                    // Si el registro de inventario se borró (raro, pero posible), lo recreamos
-                    Inventory::create([
-                        'product_id' => $item->product_id,
-                        'location_id' => $allocation->location_id,
-                        'quantity' => $allocation->quantity,
-                        'batch_number' => 'RETURN-' . date('Ymd'), // Opcional
-                    ]);
-                }
-
-                // 3. Eliminar el registro de asignación
-                $allocation->delete();
-            }
-
-            // 4. Resetear contador del item
-            $item->allocated_quantity = 0;
-            $item->save();
+        if ($existingLoc) {
+            return $existingLoc->location_id;
         }
 
-        // 5. Marcar orden como cancelada
-        $order->status = 'cancelled';
-        $order->save();
+        // 2. Estrategia: Primer Hueco Vacío (Empty Bin)
+        // Buscamos ubicaciones de almacenamiento que NO tengan registros en inventario
+        $emptyLoc = Location::where('warehouse_id', $warehouse->id)
+            ->where('type', 'storage')
+            ->where('is_blocked', false)
+            ->whereDoesntHave('inventory', function($q) {
+                $q->where('quantity', '>', 0);
+            })
+            ->orderBy('aisle')
+            ->orderBy('level')
+            ->orderBy('position')
+            ->first();
+
+        if ($emptyLoc) {
+            return $emptyLoc->id;
+        }
+
+        return null; // Bodega llena o sin configuración
     }
 }
