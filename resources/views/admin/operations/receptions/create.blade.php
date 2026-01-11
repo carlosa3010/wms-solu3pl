@@ -1,12 +1,23 @@
 @extends('layouts.admin')
 
 @section('title', 'Nueva Recepción')
-@section('header_title', 'Registrar ASN')
+@section('header_title', 'Registrar ASN (Aviso de Recepción)')
 
 @section('content')
 
     <div class="max-w-5xl mx-auto">
         
+        @if($errors->any())
+            <div class="bg-red-100 border-l-4 border-red-500 text-red-700 p-4 mb-6 rounded shadow-sm">
+                <p class="font-bold text-sm">Hay errores en el formulario:</p>
+                <ul class="list-disc list-inside text-xs mt-1">
+                    @foreach($errors->all() as $error)
+                        <li>{{ $error }}</li>
+                    @endforeach
+                </ul>
+            </div>
+        @endif
+
         <form action="{{ route('admin.receptions.store') }}" method="POST" id="asnForm">
             @csrf
             
@@ -23,7 +34,7 @@
                 <div class="p-6 grid grid-cols-1 md:grid-cols-3 gap-6">
                     <div>
                         <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">ASN Number <span class="text-red-500">*</span></label>
-                        <input type="text" name="asn_number" value="{{ $nextId ?? '' }}" required class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 ring-custom-primary outline-none font-bold text-slate-700">
+                        <input type="text" name="asn_number" value="{{ $nextId ?? '' }}" required class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 ring-custom-primary outline-none font-bold text-slate-700 bg-slate-50" readonly>
                     </div>
 
                     <div>
@@ -67,7 +78,7 @@
             <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden mb-8">
                 <div class="p-6 border-b border-slate-100 flex justify-between items-center">
                     <h3 class="font-bold text-slate-700 text-lg">Contenido de la Recepción</h3>
-                    <button type="button" onclick="addProductRow()" class="bg-slate-100 text-custom-primary px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-slate-200 transition flex items-center gap-2">
+                    <button type="button" onclick="addProductRow()" id="btnAddProduct" disabled class="bg-slate-100 text-slate-400 px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-2 cursor-not-allowed">
                         <i class="fa-solid fa-plus"></i> Agregar SKU
                     </button>
                 </div>
@@ -90,7 +101,7 @@
                 <div id="emptyState" class="p-12 text-center text-slate-400">
                     <i class="fa-solid fa-cart-flatbed text-4xl mb-3 opacity-50"></i>
                     <p class="text-sm font-bold">La lista de productos está vacía.</p>
-                    <p class="text-[10px] uppercase tracking-tighter">Seleccione un cliente y añada los productos a recibir.</p>
+                    <p class="text-[10px] uppercase tracking-tighter">Seleccione un cliente para cargar sus productos.</p>
                 </div>
             </div>
 
@@ -101,7 +112,7 @@
 
             <div class="flex items-center justify-end gap-4">
                 <a href="{{ route('admin.receptions.index') }}" class="text-slate-500 hover:text-slate-700 font-bold text-sm">Cancelar</a>
-                <button type="submit" class="bg-custom-primary text-white px-8 py-3 rounded-xl font-bold shadow-lg shadow-blue-500/30 hover:brightness-95 transition">
+                <button type="submit" class="bg-custom-primary text-white px-8 py-3 rounded-xl font-bold shadow-lg shadow-blue-500/30 hover:brightness-95 transition active:scale-95">
                     Guardar ASN
                 </button>
             </div>
@@ -111,51 +122,75 @@
     <script>
         let productIndex = 0;
         let productsList = [];
+        const btnAdd = document.getElementById('btnAddProduct');
 
         function confirmClientChange() {
             const container = document.getElementById('itemsContainer');
+            
+            // Si ya hay items, confirmar limpieza
             if(container.children.length > 0) {
                 if(!confirm('Si cambia de cliente, se vaciará la lista de productos actual. ¿Continuar?')) {
-                    // Revertir cambio si es necesario (complejo sin guardar estado previo)
+                    // Revertir selección (opcional, requiere guardar previous value)
                     return; 
                 }
                 container.innerHTML = '';
                 checkEmptyState();
             }
+            
             loadClientProducts();
         }
 
         function loadClientProducts() {
             const clientId = document.getElementById('client_id').value;
-            if(!clientId) return;
+            
+            if(!clientId) {
+                productsList = [];
+                btnAdd.disabled = true;
+                btnAdd.classList.add('bg-slate-100', 'text-slate-400', 'cursor-not-allowed');
+                btnAdd.classList.remove('bg-blue-100', 'text-custom-primary', 'hover:bg-blue-200');
+                return;
+            }
 
-            // Usamos la ruta AJAX que ya creamos para Órdenes
-            fetch(`{{ url('admin/orders/get-client-products') }}/${clientId}`)
-                .then(response => response.json())
+            // Usamos la API interna corregida (sin 'is_active')
+            fetch(`{{ url('admin/api/client-products') }}/${clientId}`)
+                .then(response => {
+                    if(!response.ok) throw new Error("Error HTTP " + response.status);
+                    return response.json();
+                })
                 .then(data => {
                     productsList = data;
-                    // Si ya había filas, limpiarlas o validar
+                    
+                    // Habilitar botón de agregar
+                    btnAdd.disabled = false;
+                    btnAdd.classList.remove('bg-slate-100', 'text-slate-400', 'cursor-not-allowed');
+                    btnAdd.classList.add('bg-blue-100', 'text-custom-primary', 'hover:bg-blue-200', 'cursor-pointer');
+
+                    if(data.length === 0) {
+                        alert("Este cliente no tiene productos registrados.");
+                    }
                 })
-                .catch(error => console.error('Error:', error));
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert("Error al cargar productos del cliente.");
+                });
         }
 
         function addProductRow() {
-            const clientId = document.getElementById('client_id').value;
-            if(!clientId) {
-                alert('Por favor seleccione un cliente primero.');
+            if(productsList.length === 0) {
+                alert('No hay productos disponibles para este cliente.');
                 return;
             }
 
             const container = document.getElementById('itemsContainer');
             const rowId = `row-${productIndex}`;
             
-            let optionsHtml = '<option value="">-- Seleccionar --</option>';
+            let optionsHtml = '<option value="">-- Seleccionar SKU --</option>';
             productsList.forEach(p => {
                 optionsHtml += `<option value="${p.id}">${p.sku} - ${p.name}</option>`;
             });
 
             const html = `
-                <tr id="${rowId}" class="animate-fade-in">
+                <tr id="${rowId}" class="animate-fade-in group hover:bg-slate-50 transition">
                     <td class="px-6 py-3 text-center text-slate-400 font-mono text-xs">${productIndex + 1}</td>
                     <td class="px-6 py-3">
                         <select name="items[${productIndex}][product_id]" required class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 ring-custom-primary outline-none bg-white">
@@ -163,10 +198,10 @@
                         </select>
                     </td>
                     <td class="px-6 py-3 text-center">
-                        <input type="number" name="items[${productIndex}][qty]" min="1" value="1" required class="w-full text-center px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 ring-custom-primary outline-none font-bold">
+                        <input type="number" name="items[${productIndex}][qty]" min="1" value="1" required class="w-full text-center px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 ring-custom-primary outline-none font-bold text-slate-700">
                     </td>
                     <td class="px-6 py-3 text-center">
-                        <button type="button" onclick="removeRow('${rowId}')" class="text-red-400 hover:text-red-600 transition">
+                        <button type="button" onclick="removeRow('${rowId}')" class="text-slate-300 hover:text-red-500 transition p-2 rounded-full hover:bg-red-50">
                             <i class="fa-solid fa-trash"></i>
                         </button>
                     </td>

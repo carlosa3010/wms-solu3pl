@@ -204,8 +204,47 @@ class WarehouseManagementController extends Controller
             'levels'    => 'required|integer|min:1|max:20' 
         ]);
         
-        Warehouse::create($validated);
-        return back()->with('success', 'Bodega creada exitosamente. Configure el mapa ahora.');
+        try {
+            DB::beginTransaction();
+
+            // 1. Crear Bodega
+            $warehouse = Warehouse::create($validated);
+
+            // 2. Crear Zona de Recepción Automática
+            // NOTA: Se crea con coordenadas NULL para evitar pasillos fantasmas
+            Location::create([
+                'warehouse_id' => $warehouse->id,
+                'code' => 'RECEPCION', // Código reservado
+                'type' => 'staging',   // Tipo zona de paso
+                'aisle' => null,       // Sin coordenadas físicas
+                'rack' => null,
+                'shelf' => null,
+                'position' => null,
+                'is_blocked' => false, // Disponible para recibir
+                'description' => 'Zona general de descarga y recepción'
+            ]);
+            
+            // Opcional: Crear Zona de Despacho
+            Location::create([
+                'warehouse_id' => $warehouse->id,
+                'code' => 'DESPACHO', 
+                'type' => 'staging',
+                'aisle' => null,
+                'rack' => null,
+                'shelf' => null,
+                'position' => null,
+                'is_blocked' => false,
+                'description' => 'Zona de preparación de salida'
+            ]);
+
+            DB::commit();
+            return back()->with('success', 'Bodega creada exitosamente con zona de RECEPCION y DESPACHO.');
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error("Error creating warehouse: " . $e->getMessage());
+            return back()->with('error', 'Error al crear bodega: ' . $e->getMessage());
+        }
     }
 
     public function updateWarehouse(Request $request, $id)
@@ -391,6 +430,8 @@ class WarehouseManagementController extends Controller
 
         // Etiquetas de Pasillos, Racks y Bines
         $locations = $warehouse->locations()
+            // Filtramos locations nulas (Recepción) para que no salgan en impresión de racks
+            ->whereNotNull('aisle')
             ->orderBy('aisle')->orderBy('rack')->orderBy('level')->orderBy('position')
             ->get();
             

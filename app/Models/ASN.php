@@ -17,16 +17,17 @@ class ASN extends Model
 
     /**
      * Atributos asignables de forma masiva.
-     * Se incluye 'total_packages' para gestionar las copias de etiquetas de bultos.
+     * Importante: 'branch_id' agregado para definir el destino.
      */
     protected $fillable = [
         'asn_number',
         'client_id',
-        'status', // sent, in_transit, receiving, completed, cancelled
+        'branch_id', // <--- NUEVO: Destino físico de la carga
+        'status',    // pending, in_transit, receiving, completed, cancelled
         'expected_arrival_date',
         'carrier_name',
         'tracking_number',
-        'total_packages', // Cantidad de bultos/cajas para impresión de etiquetas
+        'total_packages', // Cantidad de bultos para etiquetas master
         'document_ref',
         'reference_number',
         'notes'
@@ -38,7 +39,13 @@ class ASN extends Model
     protected $casts = [
         'expected_arrival_date' => 'date',
         'total_packages' => 'integer',
+        'branch_id' => 'integer',
+        'client_id' => 'integer',
     ];
+
+    // ==========================================
+    // RELACIONES
+    // ==========================================
 
     /**
      * Relación: Pertenece a un Cliente.
@@ -49,12 +56,25 @@ class ASN extends Model
     }
 
     /**
+     * Relación: Pertenece a una Sucursal de Destino.
+     * Permite saber a qué bodega física llegará el camión.
+     */
+    public function branch()
+    {
+        return $this->belongsTo(Branch::class);
+    }
+
+    /**
      * Relación: Tiene muchos Items (Detalle de productos).
      */
     public function items()
     {
         return $this->hasMany(ASNItem::class, 'asn_id');
     }
+
+    // ==========================================
+    // HELPERS Y ACCESSORS
+    // ==========================================
 
     /**
      * Helper: Total de unidades físicas esperadas en el envío.
@@ -72,5 +92,17 @@ class ASN extends Model
     public function getTotalReceivedAttribute()
     {
         return $this->items->sum('received_quantity');
+    }
+    
+    /**
+     * Helper: Porcentaje de completitud.
+     */
+    public function getProgressAttribute()
+    {
+        $expected = $this->total_expected;
+        if ($expected <= 0) return 0;
+        
+        $received = $this->total_received;
+        return min(100, round(($received / $expected) * 100));
     }
 }

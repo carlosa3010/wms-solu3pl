@@ -15,10 +15,11 @@ use App\Models\Payment;
 use App\Models\PreInvoice;
 use App\Models\Category;
 use App\Models\PaymentMethod;
-use App\Models\ShippingMethod; 
+use App\Models\ShippingMethod;
 use App\Models\Client;
 use App\Models\Country;
 use App\Models\State;
+use App\Models\Branch; // Importante para selector en ASN
 use App\Services\BillingService;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -55,6 +56,7 @@ class ClientPortalController extends Controller
             ->count();
         
         $recentOrders = Order::where('client_id', $clientId)->latest()->take(5)->get();
+        // Suma de inventario eficiente
         $stockCount = Inventory::whereHas('product', fn($q) => $q->where('client_id', $clientId))->sum('quantity');
 
         // --- Datos Financieros ---
@@ -64,7 +66,7 @@ class ClientPortalController extends Controller
             ->first();
         $corteCuenta = $currentMonthInvoice ? $currentMonthInvoice->total_amount : 0;
 
-        // 2. Saldo en Billetera y Métodos de Pago para el Modal
+        // 2. Saldo en Billetera y Métodos de Pago
         $wallet = $this->billingService->getWallet($clientId);
         $paymentMethods = PaymentMethod::where('is_active', true)->get();
 
@@ -195,9 +197,13 @@ class ClientPortalController extends Controller
     public function createOrder()
     {
         $clientId = auth()->user()->client_id;
+        // Solo productos con stock > 0
         $products = Product::where('client_id', $clientId)
             ->withSum('inventory as stock_available', 'quantity')
-            ->get()->filter(fn($p) => $p->stock_available > 0)->sortBy('sku')->values();
+            ->get()
+            ->filter(fn($p) => $p->stock_available > 0)
+            ->sortBy('sku')
+            ->values();
 
         $shippingMethods = ShippingMethod::where('is_active', true)->get();
         $countries = Country::orderBy('name')->get();
@@ -222,16 +228,20 @@ class ClientPortalController extends Controller
                 'order_number' => 'ORD-' . strtoupper(Str::random(6)),
                 'reference_number' => $request->reference_number,
                 'customer_name' => $request->customer_name,
-                'customer_address' => $request->customer_address,
-                'customer_city' => $request->customer_city,
-                'customer_state' => $request->customer_state,
+                // Asumiendo mapeo simplificado para el portal cliente, 
+                // idealmente deberíamos mapear a shipping_address
+                'shipping_address' => $request->customer_address, 
+                'city' => $request->customer_city,
+                'state' => $request->customer_state,
                 'customer_zip' => $request->customer_zip,
-                'customer_country' => $request->customer_country,
+                'country' => $request->customer_country,
                 'customer_phone' => $request->customer_phone,
                 'customer_email' => $request->customer_email,
                 'shipping_method' => $request->shipping_method,
                 'notes' => $request->notes,
                 'status' => 'pending',
+                // Branch ID se asignará automáticamente en el Admin/OrderController o por un Observer
+                // Si es crítico, se debería asignar una default branch o lógica geográfica aquí
             ]);
 
             foreach ($request->items as $item) {
@@ -239,6 +249,8 @@ class ClientPortalController extends Controller
                     'order_id' => $order->id,
                     'product_id' => $item['product_id'],
                     'quantity' => $item['quantity'],
+                    'requested_quantity' => $item['quantity'], // Importante para lógica WMS
+                    'picked_quantity' => 0,
                     'price' => 0,
                 ]);
             }
@@ -265,12 +277,12 @@ class ClientPortalController extends Controller
     }
 
     /**
-     * ASN (Aviso de Envío).
+     * ASN (Aviso de Envío / Pre-Alertas).
      */
     public function asnIndex()
     {
         $clientId = auth()->user()->client_id;
-        $asns = ASN::where('client_id', $clientId)->with('items')->latest()->get();
+        $asns = ASN::where('client_id', $clientId)->with(['items', 'branch'])->latest()->get();
         return view('client.asn_index', compact('asns'));
     }
 
@@ -278,13 +290,17 @@ class ClientPortalController extends Controller
     {
         $clientId = auth()->user()->client_id;
         $products = Product::where('client_id', $clientId)->orderBy('sku')->get();
-        return view('client.asn_create', compact('products'));
+        // Cargar sucursales para que el cliente elija destino
+        $branches = Branch::where('is_active', true)->get();
+        
+        return view('client.asn_create', compact('products', 'branches'));
     }
 
     public function storeAsn(Request $request)
     {
         $clientId = auth()->user()->client_id;
         $request->validate([
+            'branch_id' => 'required|exists:branches,id', // Validar destino
             'reference_number' => 'required|string|max:50',
             'expected_arrival_date' => 'required|date|after_or_equal:today',
             'total_packages' => 'required|integer|min:1',
@@ -295,10 +311,13 @@ class ClientPortalController extends Controller
             $asn = DB::transaction(function () use ($request, $clientId) {
                 $asn = ASN::create([
                     'client_id' => $clientId,
+                    'branch_id' => $request->branch_id, // Guardar destino
                     'asn_number' => 'ASN-' . strtoupper(Str::random(8)),
                     'reference_number' => $request->reference_number,
                     'expected_arrival_date' => $request->expected_arrival_date,
                     'total_packages' => $request->total_packages,
+                    'carrier_name' => $request->carrier_name,
+                    'tracking_number' => $request->tracking_number,
                     'notes' => $request->notes,
                     'status' => 'sent',
                 ]);
@@ -373,9 +392,6 @@ class ClientPortalController extends Controller
         return view('client.billing_index', compact('invoices', 'wallet', 'paymentMethods'));
     }
 
-    /**
-     * Reportar Pago o Recarga.
-     */
     public function storePayment(Request $request)
     {
         $clientId = auth()->user()->client_id;
@@ -391,10 +407,6 @@ class ClientPortalController extends Controller
         
         $path = $request->hasFile('proof_file') ? $request->file('proof_file')->store('payments', 'public') : null;
         $method = PaymentMethod::find($request->payment_method_id);
-
-        $concept = $request->type === 'wallet_recharge' 
-            ? 'Recarga de Billetera' 
-            : 'Pago Factura #' . ($request->invoice_id ?? 'N/A');
 
         Payment::create([
             'client_id' => $clientId,
@@ -414,9 +426,6 @@ class ClientPortalController extends Controller
         return redirect()->back()->with('success', 'Pago reportado correctamente. El administrador validará la transacción.');
     }
 
-    /**
-     * Solicitud de Retiro.
-     */
     public function requestWithdrawal(Request $request)
     {
         $request->validate(['amount' => 'required|numeric|min:10']);
@@ -429,9 +438,6 @@ class ClientPortalController extends Controller
         }
     }
 
-    /**
-     * Descarga de Pre-factura (Corte actual).
-     */
     public function downloadPreInvoice()
     {
         $clientId = auth()->user()->client_id;
@@ -456,6 +462,37 @@ class ClientPortalController extends Controller
         return view('admin.billing.pdf_template', $data);
     }
 
-    public function api() { return view('client.api'); }
+    // =========================================================================
+    // API ACCESS MANAGEMENT (SANCTUM)
+    // =========================================================================
+
+    public function apiAccess()
+    {
+        $user = Auth::user();
+        $tokens = $user->tokens;
+        return view('client.api', compact('tokens'));
+    }
+
+    public function createToken(Request $request)
+    {
+        $request->validate(['token_name' => 'required|string|max:50']);
+        $user = Auth::user();
+        
+        $token = $user->createToken($request->token_name)->plainTextToken;
+
+        return back()->with('success_token', $token);
+    }
+
+    public function deleteToken($id)
+    {
+        Auth::user()->tokens()->where('id', $id)->delete();
+        return back()->with('success', 'Token revocado.');
+    }
+
+    public function api() { 
+        // Redirige a la vista de documentación o acceso
+        return $this->apiAccess(); 
+    }
+    
     public function support() { return view('client.support'); }
 }
