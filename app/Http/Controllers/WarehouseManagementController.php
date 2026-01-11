@@ -24,12 +24,24 @@ class WarehouseManagementController extends Controller
     public function __construct(WarehouseLayoutService $layoutService)
     {
         $this->layoutService = $layoutService;
-        // Opcional: Middleware para asegurar que solo Admin accede a configuración
-        // $this->middleware('can:manage_settings'); 
     }
 
     // =========================================================================
-    // VISTAS PRINCIPALES (ADMIN)
+    // 1. UTILIDADES Y AJAX (SOLUCIÓN ERROR DE ESTADOS)
+    // =========================================================================
+
+    /**
+     * Obtiene los estados/provincias basados en el ID del país.
+     * Ruta: /admin/inventory/get-states/{countryId}
+     */
+    public function getStates($countryId)
+    {
+        $states = State::where('country_id', $countryId)->orderBy('name')->get();
+        return response()->json($states);
+    }
+
+    // =========================================================================
+    // 2. VISTAS PRINCIPALES (MAPA Y COBERTURA)
     // =========================================================================
 
     /**
@@ -43,6 +55,7 @@ class WarehouseManagementController extends Controller
         
         $selectedWarehouseId = $request->query('warehouse_id');
         $selectedWarehouse = null;
+        
         if ($selectedWarehouseId) {
             $selectedWarehouse = Warehouse::find($selectedWarehouseId);
         }
@@ -51,13 +64,12 @@ class WarehouseManagementController extends Controller
     }
 
     /**
-     * Configuración de Cobertura Geográfica (Para asignación de órdenes)
+     * Configuración de Cobertura Geográfica
      */
     public function coverage()
     {
         $branches = Branch::where('is_active', true)->get();
         $countries = Country::orderBy('name')->get();
-        // Carga optimizada de estados
         $states = State::with('country')->orderBy('country_id')->orderBy('name')->get();
 
         return view('admin.inventory.coverage', compact('branches', 'countries', 'states'));
@@ -73,7 +85,7 @@ class WarehouseManagementController extends Controller
             'can_export' => 'nullable'
         ]);
 
-        // Asignación directa (El modelo Branch debe tener 'casts' => 'array')
+        // Guardar configuración JSON y booleana
         $branch->covered_countries = $request->input('covered_countries', []);
         $branch->covered_states = $request->input('covered_states', []);
         $branch->can_export = $request->has('can_export');
@@ -84,17 +96,21 @@ class WarehouseManagementController extends Controller
     }
 
     // =========================================================================
-    // MÉTODOS DISPATCHER (Resource Router)
+    // 3. DISPATCHER (CONTROLADOR ÚNICO PARA SUCURSALES Y BODEGAS)
     // =========================================================================
     
     public function store(Request $request)
     {
-        return $this->storeBranch($request);
+        // Si el request tiene 'country', asumimos que es una Sucursal
+        if ($request->has('country') || $request->has('city')) {
+            return $this->storeBranch($request);
+        }
+        return $this->storeWarehouse($request);
     }
 
     public function update(Request $request, $id)
     {
-        // Detectar si la petición viene del formulario de sucursal o bodega
+        // Detectar si es sucursal (por URL o campos)
         if ($request->is('*/branches/*') || $request->has('country')) {
             return $this->updateBranch($request, $id);
         }
@@ -110,7 +126,7 @@ class WarehouseManagementController extends Controller
     }
 
     // =========================================================================
-    // GESTIÓN DE SUCURSALES (Branches)
+    // 4. GESTIÓN DE SUCURSALES (BRANCHES)
     // =========================================================================
 
     public function storeBranch(Request $request)
@@ -122,9 +138,12 @@ class WarehouseManagementController extends Controller
             'city'    => 'required|string|max:100',
             'address' => 'nullable|string',
             'zip'     => 'nullable|string|max:20',
-            'code'    => 'required|string|unique:branches,code|max:15'
+            'code'    => 'required|string|unique:branches,code|max:15', // Código único
+            'phone'   => 'nullable|string',
+            'email'   => 'nullable|email'
         ]);
         
+        // Valores por defecto
         $validated['is_active'] = true;
         $validated['covered_states'] = []; 
         $validated['covered_countries'] = [];
@@ -145,7 +164,10 @@ class WarehouseManagementController extends Controller
             'city'    => 'required|string|max:100',
             'address' => 'nullable|string',
             'zip'     => 'nullable|string|max:20',
-            'code'    => 'required|string|max:15|unique:branches,code,' . $branch->id 
+            // Validar unique ignorando el ID actual
+            'code'    => 'required|string|max:15|unique:branches,code,' . $branch->id,
+            'phone'   => 'nullable|string',
+            'email'   => 'nullable|email'
         ]);
         
         $branch->update($validated);
@@ -156,26 +178,16 @@ class WarehouseManagementController extends Controller
     {
         $branch = Branch::findOrFail($id);
         
-        // 1. Verificar Usuarios Activos
+        // Validaciones de integridad antes de borrar
         if (User::where('branch_id', $branch->id)->exists()) {
             return back()->with('error', 'No se puede eliminar: Hay usuarios asignados a esta sucursal.');
         }
 
-        // 2. Verificar Órdenes Activas
         if (Order::where('branch_id', $branch->id)->whereNotIn('status', ['cancelled', 'completed'])->exists()) {
             return back()->with('error', 'No se puede eliminar: Hay órdenes activas en esta sucursal.');
         }
 
-        // 3. Verificar Traslados Pendientes (Origen o Destino)
-        $pendingTransfers = Transfer::where(function($q) use ($id) {
-            $q->where('origin_branch_id', $id)->orWhere('destination_branch_id', $id);
-        })->whereIn('status', ['pending', 'in_transit'])->exists();
-
-        if ($pendingTransfers) {
-            return back()->with('error', 'No se puede eliminar: Hay traslados pendientes vinculados a esta sucursal.');
-        }
-
-        // 4. Verificar Stock en sus bodegas
+        // Verificar stock físico en cualquier bodega de la sucursal
         $hasStock = Inventory::whereHas('location.warehouse', function($q) use ($id){
             $q->where('branch_id', $id);
         })->where('quantity', '>', 0)->exists();
@@ -184,13 +196,12 @@ class WarehouseManagementController extends Controller
             return back()->with('error', 'No se puede eliminar: Aún hay stock físico en las bodegas de esta sucursal.');
         }
 
-        // Soft delete o delete real según modelo
         $branch->delete(); 
         return back()->with('success', 'Sucursal eliminada del sistema.');
     }
 
     // =========================================================================
-    // GESTIÓN DE BODEGAS (Warehouses)
+    // 5. GESTIÓN DE BODEGAS (WAREHOUSES)
     // =========================================================================
 
     public function storeWarehouse(Request $request)
@@ -210,21 +221,21 @@ class WarehouseManagementController extends Controller
             // 1. Crear Bodega
             $warehouse = Warehouse::create($validated);
 
-            // 2. Crear Zona de Recepción Automática
-            // NOTA: Se crea con coordenadas NULL para evitar pasillos fantasmas
+            // 2. Crear Zona de Recepción Automática (Staging)
+            // Se usa 'staging' para que el sistema sepa que no son racks almacenables normales
             Location::create([
                 'warehouse_id' => $warehouse->id,
-                'code' => 'RECEPCION', // Código reservado
-                'type' => 'staging',   // Tipo zona de paso
-                'aisle' => null,       // Sin coordenadas físicas
+                'code' => 'RECEPCION',
+                'type' => 'staging',   
+                'aisle' => null,       
                 'rack' => null,
                 'shelf' => null,
                 'position' => null,
-                'is_blocked' => false, // Disponible para recibir
-                'description' => 'Zona general de descarga y recepción'
+                'is_blocked' => false, 
+                'description' => 'Zona de entrada y clasificación (Inbound)'
             ]);
             
-            // Opcional: Crear Zona de Despacho
+            // 3. Crear Zona de Despacho Automática (Staging)
             Location::create([
                 'warehouse_id' => $warehouse->id,
                 'code' => 'DESPACHO', 
@@ -234,15 +245,16 @@ class WarehouseManagementController extends Controller
                 'shelf' => null,
                 'position' => null,
                 'is_blocked' => false,
-                'description' => 'Zona de preparación de salida'
+                'description' => 'Zona de salida y carga (Outbound)'
             ]);
 
             DB::commit();
-            return back()->with('success', 'Bodega creada exitosamente con zona de RECEPCION y DESPACHO.');
+            return back()->with('success', 'Bodega creada exitosamente con zonas de RECEPCION y DESPACHO.');
 
         } catch (\Exception $e) {
             DB::rollBack();
             Log::error("Error creating warehouse: " . $e->getMessage());
+            // Mostramos el error exacto para depuración en la prueba piloto
             return back()->with('error', 'Error al crear bodega: ' . $e->getMessage());
         }
     }
@@ -253,7 +265,7 @@ class WarehouseManagementController extends Controller
         
         $validated = $request->validate([
             'name'   => 'required|string|max:100',
-            'rows'   => 'required|integer|min:1|max:100',
+            'rows'   => 'required|integer|min:1|max:100', // Actualiza dimensiones visuales
             'cols'   => 'required|integer|min:1|max:100',
             'levels' => 'required|integer|min:1|max:20'
         ]);
@@ -273,7 +285,7 @@ class WarehouseManagementController extends Controller
             })->exists();
 
         if ($hasStock) {
-             return back()->withErrors(['error' => 'No se puede eliminar la bodega porque tiene stock activo. Vacíe los bines primero.']);
+             return back()->with('error', 'No se puede eliminar la bodega porque tiene stock activo. Vacíe los bines primero.');
         }
         
         $warehouse->delete();
@@ -281,11 +293,11 @@ class WarehouseManagementController extends Controller
     }
 
     // =========================================================================
-    // LÓGICA TÉCNICA: MAPA Y ETIQUETAS (Visualización)
+    // 6. LÓGICA TÉCNICA: MAPA Y GENERACIÓN DE LAYOUT (API JSON)
     // =========================================================================
 
     /**
-     * API: Obtiene la estructura JSON completa para el mapa visual.
+     * Devuelve la estructura JSON para pintar el mapa en el Canvas/JS.
      */
     public function getLayoutData($id) 
     {
@@ -299,7 +311,7 @@ class WarehouseManagementController extends Controller
     }
 
     /**
-     * API: Generación Masiva de Estructura.
+     * Generación masiva de ubicaciones (A-01-01...) basado en config.
      */
     public function generateLayout(Request $request)
     {
@@ -320,8 +332,8 @@ class WarehouseManagementController extends Controller
             DB::commit();
 
             return response()->json([
-                'success' => true,
-                'message' => "Estructura generada. Se crearon/actualizaron {$count} ubicaciones."
+                'success' => true, 
+                'message' => "Estructura generada. Se procesaron {$count} ubicaciones."
             ]);
         } catch (\Exception $e) {
             DB::rollBack();
@@ -331,7 +343,7 @@ class WarehouseManagementController extends Controller
     }
 
     /**
-     * API: Edición Individual de Rack.
+     * Guardar configuración de un Rack específico (click en el mapa).
      */
     public function saveRack(Request $request)
     {
@@ -353,7 +365,7 @@ class WarehouseManagementController extends Controller
             );
 
             return response()->json([
-                'success' => true,
+                'success' => true, 
                 'message' => 'Rack actualizado correctamente.',
                 'count' => count($locations)
             ]);
@@ -364,7 +376,7 @@ class WarehouseManagementController extends Controller
     }
 
     /**
-     * API: Obtener detalles de un rack específico.
+     * Obtener datos de un rack para el modal de edición.
      */
     public function getRackDetails(Request $request)
     {
@@ -390,6 +402,7 @@ class WarehouseManagementController extends Controller
                 return response()->json(['status' => 'success', 'levels' => []]);
             }
 
+            // Agrupar por nivel para mostrar en el formulario
             $levelsRaw = $locations->groupBy('level');
             $levels = [];
 
@@ -402,7 +415,9 @@ class WarehouseManagementController extends Controller
                 ];
             }
 
+            // Ordenar niveles ascendentemente
             usort($levels, fn($a, $b) => $a['level'] <=> $b['level']);
+            
             return response()->json(['status' => 'success', 'levels' => $levels]);
 
         } catch (\Exception $e) {
@@ -411,15 +426,16 @@ class WarehouseManagementController extends Controller
         }
     }
 
-    /**
-     * Genera las etiquetas QR (Impresión).
-     */
+    // =========================================================================
+    // 7. IMPRESIÓN DE ETIQUETAS (QR)
+    // =========================================================================
+
     public function printLabels($id)
     {
         $warehouse = Warehouse::with(['branch', 'locations.binType'])->findOrFail($id);
         $labels = [];
         
-        // Etiqueta Principal Bodega
+        // 1. Etiqueta Principal Bodega
         $labels[] = [
             'type'=>'WAREHOUSE', 
             'title'=>$warehouse->name, 
@@ -428,16 +444,17 @@ class WarehouseManagementController extends Controller
             'qr_data'=>$warehouse->code
         ];
 
-        // Etiquetas de Pasillos, Racks y Bines
+        // 2. Etiquetas de Pasillos, Racks y Bines
+        // Filtramos para no imprimir 'RECEPCION' ni 'DESPACHO' masivamente aqui
         $locations = $warehouse->locations()
-            // Filtramos locations nulas (Recepción) para que no salgan en impresión de racks
-            ->whereNotNull('aisle')
+            ->whereNotNull('aisle') 
             ->orderBy('aisle')->orderBy('rack')->orderBy('level')->orderBy('position')
             ->get();
             
         $aisles = $locations->groupBy('aisle');
 
         foreach ($aisles as $aisleNum => $locsInAisle) {
+            // Etiqueta Pasillo
             $labels[] = [
                 'type'=>'AISLE', 
                 'title'=>"PASILLO $aisleNum", 
@@ -447,6 +464,7 @@ class WarehouseManagementController extends Controller
             ];
             
             foreach ($locsInAisle->groupBy('rack') as $rackNum => $locsInRack) {
+                // Etiqueta Rack
                 $labels[] = [
                     'type'=>'RACK', 
                     'title'=>"RACK $rackNum", 
@@ -456,12 +474,13 @@ class WarehouseManagementController extends Controller
                 ];
                 
                 foreach ($locsInRack as $bin) {
+                    // Etiqueta Bin Individual
                     $labels[] = [
                         'type'=>'BIN', 
                         'title'=>$bin->code, 
                         'subtitle'=>$bin->binType->name ?? 'Std', 
                         'code'=>$bin->code, 
-                        'qr_data'=>$bin->code // Formato: BOD-P01-R01-L1-B01
+                        'qr_data'=>$bin->code 
                     ];
                 }
             }

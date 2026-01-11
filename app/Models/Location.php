@@ -14,19 +14,17 @@ class Location extends Model
      * Atributos asignables masivamente.
      */
     protected $fillable = [
-        'warehouse_id',
-        'bin_type_id',    // Relación con las dimensiones físicas
-        'code',           // Código único de ubicación (Ej: SUC-BOD-PAS-LAD-RACK-NIV-BIN)
-        'type',           // storage, picking, staging, dock, etc.
-        
-        // Nuevos campos jerárquicos (Ajustado a tu requerimiento de Migración)
-        'aisle',          // Pasillo
-        'side',           // Lado (Agregado para evitar errores)
-        'rack',           // Rack
-        'level',          // Nivel (Equivalente a 'shelf')
-        'position',       // Posición/Bin
-        
-        'status',         // active, inactive, maintenance
+        'warehouse_id', // <--- IMPORTANTE: Faltaba este vínculo
+        'code',
+        'aisle',
+        'rack',
+        'shelf',
+        'position',
+        'level',        // Asegúrate de tener este si usas niveles
+        'type',         // <--- Necesario para 'staging' (recepcion/despacho)
+        'status',
+        'bin_type_id',
+        'is_blocked',   // <--- Necesario para la lógica de creación
         'description'
     ];
 

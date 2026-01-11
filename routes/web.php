@@ -115,7 +115,7 @@ Route::middleware(['auth'])->group(function () {
             // APIs para selectores dinámicos
             Route::get('/get-sources', [InventoryController::class, 'getSources'])->name('inventory.get_sources');
             Route::get('/get-bins', [InventoryController::class, 'getBins'])->name('inventory.get_bins');
-            Route::get('/get-states/{countryId}', [OrderController::class, 'getStatesByCountry'])->name('get_states');
+            Route::get('/get-states/{countryId}', [WarehouseManagementController::class, 'getStates'])->name('get_states');
             
             Route::get('/map', [WarehouseManagementController::class, 'index'])->name('inventory.map');
         });

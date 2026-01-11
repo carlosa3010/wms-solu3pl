@@ -10,19 +10,20 @@ class Branch extends Model
     use HasFactory;
 
     protected $fillable = [
-        'name',
-        'address',
-        'city',
-        'state',
-        'country',
-        'phone',
-        'email',
-        'manager_name',
-        'covered_countries', // Corregido: nombre real en BD
-        'covered_states',    // Corregido: nombre real en BD
-        'is_active',
-        'can_export'
-    ];
+    'name',
+    'code', // <--- AGREGA ESTO
+    'address',
+    'city',
+    'state',
+    'country',
+    'phone',
+    'email',
+    'manager_name',
+    'covered_countries',
+    'covered_states',
+    'is_active',
+    'can_export'
+];
 
     protected $casts = [
         'covered_countries' => 'array', // Importante: Castear a array
