@@ -14,33 +14,39 @@ class Location extends Model
      * Atributos asignables masivamente.
      */
     protected $fillable = [
-        'warehouse_id', // <--- IMPORTANTE: Faltaba este vínculo
+        'warehouse_id', // CRÍTICO: Permite vincular la ubicación a la bodega
         'code',
         'aisle',
+        'side',         // <--- AGREGADO: Necesario para diferenciar Lado A/B en el código
         'rack',
         'shelf',
         'position',
-        'level',        // Asegúrate de tener este si usas niveles
-        'type',         // <--- Necesario para 'staging' (recepcion/despacho)
+        'level',
+        'type',         // CRÍTICO: Necesario para 'staging'
         'status',
         'bin_type_id',
-        'is_blocked',   // <--- Necesario para la lógica de creación
-        'description'
+        'is_blocked',   // CRÍTICO: Para bloquear ubicaciones en mantenimiento
+        
     ];
 
     /**
      * Boot function para lógica automática al guardar.
-     * Genera la nomenclatura automáticamente: Sucursal-Bodega-Pasillo-Lado-Rack-Nivel-Bin
+     * Genera la nomenclatura: Sucursal-Bodega-Pasillo-[Lado]-Rack-Nivel-Bin
      */
     protected static function boot()
     {
         parent::boot();
 
         static::saving(function ($location) {
-            // Solo regenera si tenemos los componentes jerárquicos completos
+            // 1. Si es una zona especial (RECEPCION/DESPACHO) no sobreescribimos el código
+            if ($location->type === 'staging') {
+                return;
+            }
+
+            // 2. Generación automática solo si tenemos coordenadas físicas
             if ($location->aisle && $location->rack && $location->level && $location->position) {
                 
-                // Cargar relaciones si no están cargadas para obtener códigos padres
+                // Cargar relaciones para obtener prefijos (Sucursal y Bodega)
                 if (!$location->relationLoaded('warehouse')) {
                     $location->load('warehouse.branch');
                 }
@@ -48,20 +54,20 @@ class Location extends Model
                 $branchCode = $location->warehouse->branch->code ?? 'GEN';
                 $whCode = $location->warehouse->code ?? 'WH';
                 
-                // Lógica de construcción del código
+                // Construcción: CAB-B01-P01-[A]-R01-L01-B01
                 $parts = [
                     $branchCode,
                     $whCode,
-                    $location->aisle,
+                    $location->aisle, // Ej: P01
                 ];
 
-                if ($location->side) {
-                    $parts[] = $location->side;
+                if (!empty($location->side)) {
+                    $parts[] = $location->side; // Ej: A
                 }
 
-                $parts[] = $location->rack;
-                $parts[] = $location->level;
-                $parts[] = $location->position;
+                $parts[] = $location->rack;     // Ej: R01
+                $parts[] = $location->level;    // Ej: L01
+                $parts[] = $location->position; // Ej: B01
 
                 // Unir con guiones
                 $location->code = implode('-', $parts);
@@ -70,81 +76,54 @@ class Location extends Model
     }
 
     /* -------------------------------------------------------------------------- */
-    /* RELACIONES                                 */
+    /* RELACIONES                                                                 */
     /* -------------------------------------------------------------------------- */
 
-    /**
-     * Relación: La ubicación pertenece a una Bodega específica.
-     */
     public function warehouse()
     {
         return $this->belongsTo(Warehouse::class);
     }
 
-    /**
-     * Relación: Define las dimensiones y capacidades de esta ubicación.
-     */
     public function binType()
     {
         return $this->belongsTo(BinType::class, 'bin_type_id');
     }
 
-    /**
-     * Relación: Stock físico real almacenado actualmente en este bin.
-     * (Mantenemos 'inventory' como estándar de Laravel y 'stock' como alias por compatibilidad)
-     */
     public function inventory()
     {
         return $this->hasMany(Inventory::class, 'location_id');
     }
 
+    // Alias para compatibilidad con código legacy
     public function stock()
     {
-        return $this->inventory(); // Alias para compatibilidad con tu código existente
+        return $this->inventory(); 
     }
 
-    /**
-     * Relación: Planificación de Salidas (Picking).
-     * Permite saber qué productos de pedidos pendientes deben retirarse de aquí.
-     */
     public function orderAllocations()
     {
         return $this->hasMany(OrderAllocation::class, 'location_id');
     }
 
-    /**
-     * Relación: Planificación de Entradas (Put-away).
-     * Permite saber qué productos de ASNs pendientes deben guardarse aquí.
-     */
     public function asnAllocations()
     {
         return $this->hasMany(ASNAllocation::class, 'location_id');
     }
 
     /* -------------------------------------------------------------------------- */
-    /* HELPERS                                   */
+    /* HELPERS                                                                    */
     /* -------------------------------------------------------------------------- */
 
-    /**
-     * Helper: Calcula el stock total en esta ubicación.
-     */
     public function getTotalQuantityAttribute()
     {
-        // Usamos stock() o inventory() indistintamente
         return $this->stock()->sum('quantity');
     }
 
-    /**
-     * Helper: Determina si la ubicación está vacía.
-     */
     public function getIsEmptyAttribute()
     {
         return $this->total_quantity <= 0;
     }
 
-    /**
-     * Helper: Obtiene dimensiones para el Mapa 3D/2D
-     */
     public function getDimensionsAttribute()
     {
         return $this->binType ? [

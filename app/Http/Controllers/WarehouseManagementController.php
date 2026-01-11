@@ -12,7 +12,6 @@ use App\Models\State;
 use App\Models\Inventory;
 use App\Models\User;
 use App\Models\Order;
-use App\Models\Transfer;
 use App\Services\WarehouseLayoutService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -27,13 +26,9 @@ class WarehouseManagementController extends Controller
     }
 
     // =========================================================================
-    // 1. UTILIDADES Y AJAX (SOLUCIÓN ERROR DE ESTADOS)
+    // 1. UTILIDADES Y AJAX
     // =========================================================================
 
-    /**
-     * Obtiene los estados/provincias basados en el ID del país.
-     * Ruta: /admin/inventory/get-states/{countryId}
-     */
     public function getStates($countryId)
     {
         $states = State::where('country_id', $countryId)->orderBy('name')->get();
@@ -41,12 +36,9 @@ class WarehouseManagementController extends Controller
     }
 
     // =========================================================================
-    // 2. VISTAS PRINCIPALES (MAPA Y COBERTURA)
+    // 2. VISTAS PRINCIPALES
     // =========================================================================
 
-    /**
-     * Mapa Interactivo de Bodegas (Layout Designer)
-     */
     public function index(Request $request)
     {
         $branches = Branch::with('warehouses')->where('is_active', true)->orderBy('name')->get();
@@ -63,9 +55,6 @@ class WarehouseManagementController extends Controller
         return view('admin.inventory.map', compact('branches', 'binTypes', 'countries', 'selectedWarehouse'));
     }
 
-    /**
-     * Configuración de Cobertura Geográfica
-     */
     public function coverage()
     {
         $branches = Branch::where('is_active', true)->get();
@@ -78,30 +67,26 @@ class WarehouseManagementController extends Controller
     public function updateCoverage(Request $request, $id)
     {
         $branch = Branch::findOrFail($id);
-        
         $request->validate([
             'covered_countries' => 'nullable|array',
             'covered_states' => 'nullable|array',
             'can_export' => 'nullable'
         ]);
 
-        // Guardar configuración JSON y booleana
         $branch->covered_countries = $request->input('covered_countries', []);
         $branch->covered_states = $request->input('covered_states', []);
         $branch->can_export = $request->has('can_export');
-        
         $branch->save();
 
         return back()->with('success', "Cobertura actualizada para {$branch->name}");
     }
 
     // =========================================================================
-    // 3. DISPATCHER (CONTROLADOR ÚNICO PARA SUCURSALES Y BODEGAS)
+    // 3. DISPATCHER
     // =========================================================================
     
     public function store(Request $request)
     {
-        // Si el request tiene 'country', asumimos que es una Sucursal
         if ($request->has('country') || $request->has('city')) {
             return $this->storeBranch($request);
         }
@@ -110,7 +95,6 @@ class WarehouseManagementController extends Controller
 
     public function update(Request $request, $id)
     {
-        // Detectar si es sucursal (por URL o campos)
         if ($request->is('*/branches/*') || $request->has('country')) {
             return $this->updateBranch($request, $id);
         }
@@ -126,7 +110,7 @@ class WarehouseManagementController extends Controller
     }
 
     // =========================================================================
-    // 4. GESTIÓN DE SUCURSALES (BRANCHES)
+    // 4. GESTIÓN DE SUCURSALES
     // =========================================================================
 
     public function storeBranch(Request $request)
@@ -138,12 +122,11 @@ class WarehouseManagementController extends Controller
             'city'    => 'required|string|max:100',
             'address' => 'nullable|string',
             'zip'     => 'nullable|string|max:20',
-            'code'    => 'required|string|unique:branches,code|max:15', // Código único
+            'code'    => 'required|string|unique:branches,code|max:15',
             'phone'   => 'nullable|string',
             'email'   => 'nullable|email'
         ]);
         
-        // Valores por defecto
         $validated['is_active'] = true;
         $validated['covered_states'] = []; 
         $validated['covered_countries'] = [];
@@ -164,7 +147,6 @@ class WarehouseManagementController extends Controller
             'city'    => 'required|string|max:100',
             'address' => 'nullable|string',
             'zip'     => 'nullable|string|max:20',
-            // Validar unique ignorando el ID actual
             'code'    => 'required|string|max:15|unique:branches,code,' . $branch->id,
             'phone'   => 'nullable|string',
             'email'   => 'nullable|email'
@@ -178,30 +160,19 @@ class WarehouseManagementController extends Controller
     {
         $branch = Branch::findOrFail($id);
         
-        // Validaciones de integridad antes de borrar
         if (User::where('branch_id', $branch->id)->exists()) {
-            return back()->with('error', 'No se puede eliminar: Hay usuarios asignados a esta sucursal.');
+            return back()->with('error', 'No se puede eliminar: Hay usuarios asignados.');
         }
-
         if (Order::where('branch_id', $branch->id)->whereNotIn('status', ['cancelled', 'completed'])->exists()) {
-            return back()->with('error', 'No se puede eliminar: Hay órdenes activas en esta sucursal.');
+            return back()->with('error', 'No se puede eliminar: Hay órdenes activas.');
         }
-
-        // Verificar stock físico en cualquier bodega de la sucursal
-        $hasStock = Inventory::whereHas('location.warehouse', function($q) use ($id){
-            $q->where('branch_id', $id);
-        })->where('quantity', '>', 0)->exists();
-
-        if ($hasStock) {
-            return back()->with('error', 'No se puede eliminar: Aún hay stock físico en las bodegas de esta sucursal.');
-        }
-
+        
         $branch->delete(); 
         return back()->with('success', 'Sucursal eliminada del sistema.');
     }
 
     // =========================================================================
-    // 5. GESTIÓN DE BODEGAS (WAREHOUSES)
+    // 5. GESTIÓN DE BODEGAS
     // =========================================================================
 
     public function storeWarehouse(Request $request)
@@ -221,41 +192,37 @@ class WarehouseManagementController extends Controller
             // 1. Crear Bodega
             $warehouse = Warehouse::create($validated);
 
-            // 2. Crear Zona de Recepción Automática (Staging)
-            // Se usa 'staging' para que el sistema sepa que no son racks almacenables normales
-            Location::create([
-                'warehouse_id' => $warehouse->id,
-                'code' => 'RECEPCION',
-                'type' => 'staging',   
-                'aisle' => null,       
-                'rack' => null,
-                'shelf' => null,
-                'position' => null,
-                'is_blocked' => false, 
-                'description' => 'Zona de entrada y clasificación (Inbound)'
-            ]);
+            // 2. Crear Zona de Recepción (Inbound)
+            $recepcion = new Location();
+            $recepcion->warehouse_id = $warehouse->id;
+            $recepcion->code = 'RECEPCION';
+            $recepcion->type = 'staging';
+            $recepcion->is_blocked = false;
+            $recepcion->aisle = null;
+            $recepcion->rack = null;
+            $recepcion->level = null;
+            $recepcion->position = null;
+            $recepcion->save();
             
-            // 3. Crear Zona de Despacho Automática (Staging)
-            Location::create([
-                'warehouse_id' => $warehouse->id,
-                'code' => 'DESPACHO', 
-                'type' => 'staging',
-                'aisle' => null,
-                'rack' => null,
-                'shelf' => null,
-                'position' => null,
-                'is_blocked' => false,
-                'description' => 'Zona de salida y carga (Outbound)'
-            ]);
+            // 3. Crear Zona de Despacho (Outbound)
+            $despacho = new Location();
+            $despacho->warehouse_id = $warehouse->id;
+            $despacho->code = 'DESPACHO';
+            $despacho->type = 'staging';
+            $despacho->is_blocked = false;
+            $despacho->aisle = null;
+            $despacho->rack = null;
+            $despacho->level = null;
+            $despacho->position = null;
+            $despacho->save();
 
             DB::commit();
-            return back()->with('success', 'Bodega creada exitosamente con zonas de RECEPCION y DESPACHO.');
+            return back()->with('success', 'Bodega creada exitosamente.');
 
         } catch (\Exception $e) {
             DB::rollBack();
             Log::error("Error creating warehouse: " . $e->getMessage());
-            // Mostramos el error exacto para depuración en la prueba piloto
-            return back()->with('error', 'Error al crear bodega: ' . $e->getMessage());
+            return back()->withErrors(['msg' => 'Error al guardar: ' . $e->getMessage()]);
         }
     }
 
@@ -265,7 +232,7 @@ class WarehouseManagementController extends Controller
         
         $validated = $request->validate([
             'name'   => 'required|string|max:100',
-            'rows'   => 'required|integer|min:1|max:100', // Actualiza dimensiones visuales
+            'rows'   => 'required|integer|min:1|max:100',
             'cols'   => 'required|integer|min:1|max:100',
             'levels' => 'required|integer|min:1|max:20'
         ]);
@@ -278,14 +245,13 @@ class WarehouseManagementController extends Controller
     {
         $warehouse = Warehouse::findOrFail($id);
         
-        // Verificar Stock
         $hasStock = Location::where('warehouse_id', $warehouse->id)
             ->whereHas('inventory', function($q) {
                 $q->where('quantity', '>', 0);
             })->exists();
 
         if ($hasStock) {
-             return back()->with('error', 'No se puede eliminar la bodega porque tiene stock activo. Vacíe los bines primero.');
+             return back()->with('error', 'No se puede eliminar: La bodega tiene stock activo.');
         }
         
         $warehouse->delete();
@@ -293,34 +259,24 @@ class WarehouseManagementController extends Controller
     }
 
     // =========================================================================
-    // 6. LÓGICA TÉCNICA: MAPA Y GENERACIÓN DE LAYOUT (API JSON)
+    // 6. LÓGICA TÉCNICA: MAPA Y LAYOUT
     // =========================================================================
 
-    /**
-     * Devuelve la estructura JSON para pintar el mapa en el Canvas/JS.
-     */
     public function getLayoutData($id) 
     {
         try {
             $data = $this->layoutService->getWarehouseMapData($id);
             return response()->json(['success' => true, 'structure' => $data]);
         } catch (\Exception $e) {
-            Log::error("Error loading layout: " . $e->getMessage());
             return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
         }
     }
 
-    /**
-     * Generación masiva de ubicaciones (A-01-01...) basado en config.
-     */
     public function generateLayout(Request $request)
     {
         $request->validate([
             'warehouse_id' => 'required|exists:warehouses,id',
             'level_configs' => 'required|array', 
-            'level_configs.*.level' => 'required|integer',
-            'level_configs.*.bins_count' => 'required|integer|min:1',
-            'level_configs.*.bin_type_id' => 'required|exists:bin_types,id',
         ]);
 
         try {
@@ -331,62 +287,33 @@ class WarehouseManagementController extends Controller
             );
             DB::commit();
 
-            return response()->json([
-                'success' => true, 
-                'message' => "Estructura generada. Se procesaron {$count} ubicaciones."
-            ]);
+            return response()->json(['success' => true, 'message' => "Estructura generada ({$count} bines)."]);
         } catch (\Exception $e) {
             DB::rollBack();
-            Log::error("Error generating layout: " . $e->getMessage());
-            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
         }
     }
 
-    /**
-     * Guardar configuración de un Rack específico (click en el mapa).
-     */
     public function saveRack(Request $request)
     {
-        $request->validate([
-            'warehouse_id' => 'required|exists:warehouses,id',
-            'aisle' => 'required',
-            'side' => 'required',
-            'rack_code' => 'required',
-            'level_configs' => 'required|array' 
-        ]);
+        $request->validate(['warehouse_id' => 'required', 'rack_code' => 'required']);
 
         try {
-            $locations = $this->layoutService->createRackStructure(
+            $this->layoutService->createRackStructure(
                 $request->warehouse_id,
                 $request->aisle,
                 $request->side,
                 $request->rack_code,
                 $request->level_configs
             );
-
-            return response()->json([
-                'success' => true, 
-                'message' => 'Rack actualizado correctamente.',
-                'count' => count($locations)
-            ]);
+            return response()->json(['success' => true, 'message' => 'Rack actualizado.']);
         } catch (\Exception $e) {
-            Log::error("Error saving single rack: " . $e->getMessage());
             return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
         }
     }
 
-    /**
-     * Obtener datos de un rack para el modal de edición.
-     */
     public function getRackDetails(Request $request)
     {
-        $request->validate([
-            'warehouse_id' => 'required|exists:warehouses,id',
-            'aisle'        => 'required',
-            'side'         => 'required',
-            'rack_col'     => 'required'
-        ]);
-
         try {
             $warehouse = Warehouse::findOrFail($request->warehouse_id);
             $rackPad = str_pad($request->rack_col, 2, '0', STR_PAD_LEFT); 
@@ -402,32 +329,23 @@ class WarehouseManagementController extends Controller
                 return response()->json(['status' => 'success', 'levels' => []]);
             }
 
-            // Agrupar por nivel para mostrar en el formulario
-            $levelsRaw = $locations->groupBy('level');
-            $levels = [];
-
-            foreach ($levelsRaw as $shelfNum => $locs) {
-                $firstLoc = $locs->first();
-                $levels[] = [
-                    'level'       => (int)$shelfNum,
-                    'bins_count'  => (int)$locs->count(),
-                    'bin_type_id' => $firstLoc->bin_type_id
+            $levels = $locations->groupBy('level')->map(function ($locs, $key) {
+                return [
+                    'level' => (int)$key,
+                    'bins_count' => $locs->count(),
+                    'bin_type_id' => $locs->first()->bin_type_id
                 ];
-            }
+            })->values();
 
-            // Ordenar niveles ascendentemente
-            usort($levels, fn($a, $b) => $a['level'] <=> $b['level']);
-            
             return response()->json(['status' => 'success', 'levels' => $levels]);
 
         } catch (\Exception $e) {
-            Log::error('Error getRackDetails: ' . $e->getMessage());
-            return response()->json(['status' => 'error', 'message' => 'Error cargando datos'], 500);
+            return response()->json(['status' => 'error', 'message' => $e->getMessage()], 500);
         }
     }
 
     // =========================================================================
-    // 7. IMPRESIÓN DE ETIQUETAS (QR)
+    // 7. ETIQUETAS (REFACTORIZADO PARA GENERAR TODAS LAS ETIQUETAS)
     // =========================================================================
 
     public function printLabels($id)
@@ -435,53 +353,82 @@ class WarehouseManagementController extends Controller
         $warehouse = Warehouse::with(['branch', 'locations.binType'])->findOrFail($id);
         $labels = [];
         
-        // 1. Etiqueta Principal Bodega
+        // 1. Etiqueta Maestra de BODEGA
         $labels[] = [
-            'type'=>'WAREHOUSE', 
-            'title'=>$warehouse->name, 
-            'subtitle'=>$warehouse->branch->name, 
-            'code'=>$warehouse->code, 
-            'qr_data'=>$warehouse->code
+            'type' => 'WAREHOUSE', 
+            'title' => $warehouse->name, 
+            'subtitle' => $warehouse->branch->name, 
+            'code' => $warehouse->code, 
+            'qr_data' => $warehouse->code
         ];
 
-        // 2. Etiquetas de Pasillos, Racks y Bines
-        // Filtramos para no imprimir 'RECEPCION' ni 'DESPACHO' masivamente aqui
+        // 2. Etiquetas de Zonas Especiales (RECEPCION / DESPACHO)
+        $stagingZones = Location::where('warehouse_id', $id)
+            ->whereIn('code', ['RECEPCION', 'DESPACHO'])
+            ->get();
+
+        foreach($stagingZones as $zone) {
+            $labels[] = [
+                'type' => 'ZONE',
+                'title' => $zone->code,
+                'subtitle' => $warehouse->name,
+                'code' => $zone->code,
+                'qr_data' => $zone->code
+            ];
+        }
+
+        // 3. Etiquetas Estructurales (Pasillos, Racks, Bines)
+        // Filtramos 'aisle' != null para evitar el "Pasillo 0" o zonas sin ubicación física
         $locations = $warehouse->locations()
             ->whereNotNull('aisle') 
-            ->orderBy('aisle')->orderBy('rack')->orderBy('level')->orderBy('position')
+            ->where('aisle', '!=', '')
+            ->orderBy('aisle')
+            ->orderBy('side') 
+            ->orderBy('rack')
+            ->orderBy('level')
+            ->orderBy('position')
             ->get();
             
+        // Agrupamos por Pasillo
         $aisles = $locations->groupBy('aisle');
 
         foreach ($aisles as $aisleNum => $locsInAisle) {
-            // Etiqueta Pasillo
+            // A. Etiqueta de PASILLO (Una por pasillo)
             $labels[] = [
-                'type'=>'AISLE', 
-                'title'=>"PASILLO $aisleNum", 
-                'subtitle'=>$warehouse->name, 
-                'code'=>"P$aisleNum", 
-                'qr_data'=>"{$warehouse->code}-P$aisleNum"
+                'type' => 'AISLE', 
+                'title' => "PASILLO $aisleNum", 
+                'subtitle' => $warehouse->name, 
+                'code' => "P$aisleNum", 
+                'qr_data' => "{$warehouse->code}-P$aisleNum"
             ];
             
-            foreach ($locsInAisle->groupBy('rack') as $rackNum => $locsInRack) {
-                // Etiqueta Rack
-                $labels[] = [
-                    'type'=>'RACK', 
-                    'title'=>"RACK $rackNum", 
-                    'subtitle'=>"PASILLO $aisleNum", 
-                    'code'=>"R$rackNum", 
-                    'qr_data'=>"{$warehouse->code}-P$aisleNum-R$rackNum"
-                ];
-                
-                foreach ($locsInRack as $bin) {
-                    // Etiqueta Bin Individual
+            // Agrupamos por Rack dentro del pasillo
+            // Aquí agrupamos por Lado y luego Rack para orden lógico
+            $sides = $locsInAisle->groupBy('side');
+            
+            foreach($sides as $side => $locsInSide) {
+                $racks = $locsInSide->groupBy('rack');
+
+                foreach ($racks as $rackNum => $locsInRack) {
+                    // B. Etiqueta de RACK (Ej: Pasillo 01 - Lado A - Rack 05)
                     $labels[] = [
-                        'type'=>'BIN', 
-                        'title'=>$bin->code, 
-                        'subtitle'=>$bin->binType->name ?? 'Std', 
-                        'code'=>$bin->code, 
-                        'qr_data'=>$bin->code 
+                        'type' => 'RACK', 
+                        'title' => "RACK $rackNum ($side)", 
+                        'subtitle' => "P$aisleNum - Lado $side", 
+                        'code' => "R$rackNum", 
+                        'qr_data' => "{$warehouse->code}-P$aisleNum-{$side}-R$rackNum"
                     ];
+                    
+                    // C. Etiquetas de BIN INDIVIDUALES
+                    foreach ($locsInRack as $bin) {
+                        $labels[] = [
+                            'type' => 'BIN', 
+                            'title' => $bin->code, 
+                            'subtitle' => $bin->binType->name ?? 'Std', 
+                            'code' => $bin->code, 
+                            'qr_data' => $bin->code 
+                        ];
+                    }
                 }
             }
         }

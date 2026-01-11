@@ -10,17 +10,14 @@ use Exception;
 class WarehouseLayoutService
 {
     /**
-     * GENERACIÓN MASIVA: Crea toda la estructura de la bodega.
-     * Recorre las dimensiones definidas en la bodega (Pasillos, Lados, Racks) y aplica la configuración.
-     * * @param int $warehouseId
-     * @param array $levelConfigs Array con la configuración por nivel
+     * GENERACIÓN MASIVA: Crea o Sincroniza toda la estructura.
      */
     public function generateFullWarehouse(int $warehouseId, array $levelConfigs)
     {
         $warehouse = Warehouse::with('branch')->findOrFail($warehouseId);
         
         if ($warehouse->rows <= 0 || $warehouse->cols <= 0 || $warehouse->levels <= 0) {
-            throw new Exception("La bodega '{$warehouse->name}' no tiene dimensiones definidas. Edita la bodega primero.");
+            throw new Exception("La bodega no tiene dimensiones definidas.");
         }
 
         DB::beginTransaction();
@@ -29,26 +26,36 @@ class WarehouseLayoutService
             $branchCode = $warehouse->branch->code ?? 'GEN';
             $whCode = $warehouse->code;
 
+            $validAisles = []; 
+
             // Iterar Pasillos (Rows)
             for ($p = 1; $p <= $warehouse->rows; $p++) {
-                // Forzamos 2 dígitos siempre: 1 -> "01"
                 $aisleCode = str_pad($p, 2, '0', STR_PAD_LEFT);
+                $validAisles[] = $aisleCode;
                 
-                // Iterar Lados
                 foreach (['A', 'B'] as $side) {
-                    
-                    // Iterar Racks por Lado (Cols)
                     for ($r = 1; $r <= $warehouse->cols; $r++) {
                         $rackCode = str_pad($r, 2, '0', STR_PAD_LEFT);
                         
-                        // Generar ubicaciones para este rack
-                        // Nota: En generación masiva NO borramos sobrantes automáticamente por rendimiento,
-                        // asumimos que es una generación inicial o regeneración completa.
                         $locations = $this->createRackLogic($warehouse, $aisleCode, $side, $rackCode, $levelConfigs);
                         $createdCount += count($locations);
                     }
+                    
+                    // LIMPIEZA DE RACKS SOBRANTES EN ESTE PASILLO/LADO
+                    $maxRackCode = str_pad($warehouse->cols, 2, '0', STR_PAD_LEFT);
+                    Location::where('warehouse_id', $warehouse->id)
+                        ->where('aisle', $aisleCode)
+                        ->where('side', $side)
+                        ->where('rack', '>', $maxRackCode) 
+                        ->delete();
                 }
             }
+
+            // LIMPIEZA DE PASILLOS SOBRANTES
+            Location::where('warehouse_id', $warehouse->id)
+                ->whereNotNull('aisle')
+                ->whereNotIn('aisle', $validAisles)
+                ->delete();
 
             DB::commit();
             return $createdCount;
@@ -61,36 +68,29 @@ class WarehouseLayoutService
 
     /**
      * EDICIÓN INDIVIDUAL: Configura un rack específico y LIMPIA lo que sobre.
-     * Permite personalizar niveles y bines para un rack en particular.
-     * * @param int $warehouseId
-     * @param string $aisle Pasillo (Ej: '01' o '1')
-     * @param string $side Lado ('A' o 'B')
-     * @param string $rackCode Rack (Ej: '05' o '5')
-     * @param array $levelConfigs Array de configuración de niveles
      */
     public function createRackStructure($warehouseId, $aisle, $side, $rackCode, $levelConfigs)
     {
         $warehouse = Warehouse::with('branch')->findOrFail($warehouseId);
         
-        // 1. Estandarización de coordenadas para asegurar coincidencia con la DB
         $aislePad = str_pad($aisle, 2, '0', STR_PAD_LEFT);
         $rackPad = str_pad($rackCode, 2, '0', STR_PAD_LEFT);
 
         DB::beginTransaction();
         try {
-            // 2. Generar/Actualizar la estructura nueva
+            // 1. Generar/Actualizar bines y obtener sus IDs
             $createdLocations = $this->createRackLogic($warehouse, $aislePad, $side, $rackPad, $levelConfigs);
             
-            // Obtener los IDs que acabamos de confirmar como válidos
+            // 2. Extraer solo los IDs que acabamos de confirmar que existen
             $validIds = collect($createdLocations)->pluck('id')->toArray();
 
-            // 3. LIMPIEZA: Eliminar (SoftDelete) ubicaciones que ya no existen en la nueva configuración
-            // Buscamos todas las ubicaciones de ESTE rack específico
+            // 3. LOGICA DE BORRADO INTELIGENTE (SYNC):
+            // Borra (SoftDelete) lo que sobre en este rack
             Location::where('warehouse_id', $warehouse->id)
                 ->where('aisle', $aislePad)
                 ->where('side', $side)
                 ->where('rack', $rackPad)
-                ->whereNotIn('id', $validIds) // Excluimos los que acabamos de guardar
+                ->whereNotIn('id', $validIds) 
                 ->delete();
 
             DB::commit();
@@ -102,8 +102,7 @@ class WarehouseLayoutService
     }
 
     /**
-     * Lógica centralizada para crear las ubicaciones (Bines) de un rack dado.
-     * Utiliza updateOrCreate para evitar duplicados si el código ya existe.
+     * Lógica centralizada CORREGIDA para manejar SoftDeletes.
      */
     private function createRackLogic($warehouse, $aisle, $side, $rackCode, $levelConfigs)
     {
@@ -114,7 +113,6 @@ class WarehouseLayoutService
         foreach ($levelConfigs as $config) {
             $levelNum = $config['level'];
             
-            // Validar altura máxima permitida por la configuración de la bodega
             if ($levelNum > $warehouse->levels) continue;
 
             $levelCode = str_pad($levelNum, 2, '0', STR_PAD_LEFT);
@@ -123,33 +121,46 @@ class WarehouseLayoutService
 
             for ($b = 1; $b <= $binsCount; $b++) {
                 $binCode = str_pad($b, 2, '0', STR_PAD_LEFT);
-                
-                // Nomenclatura Única: SUC-BOD-PAS-LAD-RACK-NIV-BIN
-                // Al incluir todos los componentes estandarizados, garantizamos unicidad lógica
                 $fullCode = "{$branchCode}-{$whCode}-{$aisle}-{$side}-{$rackCode}-{$levelCode}-{$binCode}";
 
-                // Buscamos por warehouse_id + code para encontrar el registro exacto
-                $loc = Location::updateOrCreate(
-                    [
-                        'warehouse_id' => $warehouse->id,
-                        'code'         => $fullCode
-                    ],
-                    [
-                        'branch_id'    => $warehouse->branch_id ?? null,
+                // 1. BUSCAR INCLUSO SI ESTÁ BORRADO (withTrashed)
+                $loc = Location::withTrashed()
+                    ->where('warehouse_id', $warehouse->id)
+                    ->where('code', $fullCode)
+                    ->first();
+
+                if ($loc) {
+                    // 2. SI EXISTE: Actualizar datos y RESTAURAR
+                    $loc->update([
                         'aisle'        => $aisle,
                         'side'         => $side,
                         'rack'         => $rackCode,
                         'level'        => $levelCode,
-                        'position'     => $binCode, // Se guarda '01'
+                        'position'     => $binCode,
                         'bin_type_id'  => $binTypeId,
                         'type'         => 'storage',
-                        'status'       => 'active'
-                    ]
-                );
+                        'status'       => 'active',
+                        'is_blocked'   => false
+                    ]);
 
-                // Si usamos SoftDeletes y el registro estaba borrado, lo restauramos
-                if (method_exists($loc, 'trashed') && $loc->trashed()) {
-                    $loc->restore();
+                    if ($loc->trashed()) {
+                        $loc->restore(); // <--- Aquí ocurre la magia: "Revive" el bin
+                    }
+                } else {
+                    // 3. SI NO EXISTE: Crear nuevo
+                    $loc = Location::create([
+                        'warehouse_id' => $warehouse->id,
+                        'code'         => $fullCode,
+                        'aisle'        => $aisle,
+                        'side'         => $side,
+                        'rack'         => $rackCode,
+                        'level'        => $levelCode,
+                        'position'     => $binCode,
+                        'bin_type_id'  => $binTypeId,
+                        'type'         => 'storage',
+                        'status'       => 'active',
+                        'is_blocked'   => false
+                    ]);
                 }
 
                 $createdLocations[] = $loc;
@@ -159,11 +170,13 @@ class WarehouseLayoutService
     }
 
     /**
-     * Obtiene la estructura jerárquica para dibujar el mapa visualmente.
+     * Obtiene el mapa visual.
      */
     public function getWarehouseMapData($warehouseId)
     {
         $locations = Location::where('warehouse_id', $warehouseId)
+            ->whereNotNull('aisle') 
+            ->where('aisle', '!=', '')
             ->with(['binType', 'inventory']) 
             ->orderBy('aisle')
             ->orderBy('rack')
@@ -174,9 +187,9 @@ class WarehouseLayoutService
         $map = [];
 
         foreach ($locations as $loc) {
-            $aisle = $loc->aisle ?? '00';
-            $side = $loc->side ?? 'U';
-            $rack = $loc->rack ?? '00';
+            $aisle = $loc->aisle; 
+            $side = $loc->side ?? 'A'; 
+            $rack = $loc->rack ?? '01';
             
             if (!isset($map[$aisle])) $map[$aisle] = [];
             if (!isset($map[$aisle][$side])) $map[$aisle][$side] = [];

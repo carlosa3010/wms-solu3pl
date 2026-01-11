@@ -1,4 +1,3 @@
-
 <html lang="es">
 <head>
     <meta charset="UTF-8">
@@ -27,8 +26,9 @@
 
         /* TIPOS DE ETIQUETAS */
         
-        /* 1. Bodega / Pasillo (Grande - Media Carta aprox o 4x6") */
-        .type-WAREHOUSE, .type-AISLE {
+        /* 1. Bodega / Pasillo / ZONAS (Grande - Media Carta aprox o 4x6") */
+        /* AGREGADO .type-ZONE AQUÍ */
+        .type-WAREHOUSE, .type-AISLE, .type-ZONE {
             width: 15cm;
             height: 10cm;
             flex-direction: column;
@@ -61,13 +61,13 @@
                 page-break-after: always;
             }
             /* Forzar salto de página entre tipos grandes */
-            .type-WAREHOUSE, .type-AISLE { page-break-after: always; }
+            /* AGREGADO .type-ZONE AQUÍ TAMBIÉN */
+            .type-WAREHOUSE, .type-AISLE, .type-ZONE { page-break-after: always; }
         }
     </style>
 </head>
 <body>
 
-    <!-- Barra Herramientas -->
     <div class="no-print fixed top-0 left-0 w-full bg-slate-900 text-white p-4 flex justify-between items-center shadow-lg z-50">
         <div>
             <h1 class="font-bold text-lg"><i class="fa-solid fa-print mr-2"></i> Rotulación: {{ $warehouse->name }}</h1>
@@ -82,14 +82,14 @@
     </div>
     <div class="h-20 no-print"></div>
 
-    <!-- Contenedor Etiquetas -->
     <div class="p-8 flex flex-wrap gap-4 justify-center">
         @foreach($labels as $index => $label)
             
             <div class="label-card type-{{ $label['type'] }}">
                 
-                {{-- DISEÑO PARA PASILLOS Y BODEGAS (Grande) --}}
-                @if(in_array($label['type'], ['WAREHOUSE', 'AISLE']))
+                {{-- DISEÑO PARA PASILLOS, BODEGAS Y ZONAS (Grande) --}}
+                {{-- AGREGADO 'ZONE' AL ARRAY --}}
+                @if(in_array($label['type'], ['WAREHOUSE', 'AISLE', 'ZONE']))
                     <div class="absolute top-0 left-0 w-full h-4 bg-black"></div>
                     <h1 class="text-4xl font-black uppercase mb-2">{{ $label['title'] }}</h1>
                     <p class="text-xl text-slate-600 mb-6">{{ $label['subtitle'] }}</p>
@@ -100,12 +100,10 @@
                 @else
                     <div class="absolute left-0 top-0 bottom-0 w-2 {{ $label['type'] == 'RACK' ? 'bg-blue-600' : 'bg-green-500' }}"></div>
                     
-                    <!-- QR Izquierda -->
                     <div class="w-32 border-r border-slate-200 pr-2 mr-2 flex flex-col items-center justify-center">
                         <canvas id="qr-{{ $index }}"></canvas>
                     </div>
 
-                    <!-- Texto Derecha -->
                     <div class="flex-1 flex flex-col justify-center">
                         <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">{{ $label['type'] }}</p>
                         <h2 class="{{ $label['type'] == 'RACK' ? 'text-2xl' : 'text-xl' }} font-black text-slate-800 leading-none mb-1">
@@ -128,7 +126,8 @@
         window.onload = function() {
             const labels = @json($labels);
             labels.forEach((label, index) => {
-                const size = label.type === 'BIN' || label.type === 'RACK' ? 100 : 200;
+                // Aumentamos el tamaño del QR para Zonas también
+                const size = (label.type === 'BIN' || label.type === 'RACK') ? 100 : 200;
                 new QRious({
                     element: document.getElementById('qr-' + index),
                     value: label.qr_data,

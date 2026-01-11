@@ -4,14 +4,15 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\SoftDeletes; // Recomendado si usas SoftDeletes en migraciones
 
 class Warehouse extends Model
 {
     use HasFactory;
+    // use SoftDeletes; // Descomenta esto solo si tu tabla 'warehouses' tiene columna 'deleted_at'
 
     /**
      * Los atributos que se pueden asignar masivamente.
-     * Agregamos 'bin_size' y 'levels' para soportar la nueva configuración.
      */
     protected $fillable = [
         'branch_id', 
@@ -19,12 +20,13 @@ class Warehouse extends Model
         'code', 
         'rows', 
         'cols',
-        'bin_size', // Nuevo
-        'levels'    // Nuevo
+        'levels',
+        'bin_size',  // Opcional: asegúrate que esta columna exista en tu BD
+         // <--- AGREGADO: Útil para el status
     ];
 
     /**
-     * Pertenece a una Sucursal física
+     * Relación: Pertenece a una Sucursal física
      */
     public function branch()
     {
@@ -32,7 +34,7 @@ class Warehouse extends Model
     }
 
     /**
-     * Tiene muchas ubicaciones (Racks/Celdas) generadas
+     * Relación: Tiene muchas ubicaciones (Racks, Celdas y Zonas de carga)
      */
     public function locations()
     {
@@ -40,7 +42,8 @@ class Warehouse extends Model
     }
     
     /**
-     * Acceso directo al inventario en esta bodega
+     * Relación: Acceso directo al inventario en esta bodega a través de sus ubicaciones.
+     * Permite hacer: $warehouse->inventory->sum('quantity')
      */
     public function inventory()
     {

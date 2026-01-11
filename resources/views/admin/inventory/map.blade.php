@@ -529,7 +529,8 @@
         Alpine.data('warehouseMap', () => ({
             loading: false,
             submitting: false,
-            selectedWarehouseId: '{{ $selectedWarehouse ? $selectedWarehouse->id : "" }}',
+            // Uso seguro de variable PHP con fallback a string vacío
+            selectedWarehouseId: '{{ optional($selectedWarehouse)->id ?? "" }}',
             mapData: null,
             showGeneratorModal: false,
             whConfig: { rows: 0, cols: 0, levels: 0 },
@@ -539,18 +540,23 @@
             init() {
                 if(this.selectedWarehouseId) {
                     this.loadMapData();
-                    this.updateWhConfigFromSelect();
+                    // Esperar a que el DOM renderice el select para leer data attributes
+                    this.$nextTick(() => {
+                        this.updateWhConfigFromSelect();
+                    });
                 }
             },
 
             updateWhConfigFromSelect() {
                 const select = document.querySelector('select[x-model="selectedWarehouseId"]');
+                if(!select) return;
+                
                 const option = select.options[select.selectedIndex];
                 if(option && option.value) {
                     this.whConfig = {
-                        rows: parseInt(option.dataset.rows),
-                        cols: parseInt(option.dataset.cols),
-                        levels: parseInt(option.dataset.levels)
+                        rows: parseInt(option.dataset.rows) || 0,
+                        cols: parseInt(option.dataset.cols) || 0,
+                        levels: parseInt(option.dataset.levels) || 0
                     };
                 }
             },
@@ -563,43 +569,46 @@
                 this.updateWhConfigFromSelect();
                 this.loading = true;
                 try {
+                    // Ruta correcta definida en web.php: admin.warehouses.layout_data
                     const response = await axios.get(`/admin/warehouses/${this.selectedWarehouseId}/layout-data`);
                     if (response.data.success) {
                         this.mapData = response.data.structure;
                     }
                 } catch (error) {
-                    console.error(error);
+                    console.error("Error cargando mapa:", error);
+                    alert("Error al cargar la estructura de la bodega.");
                 } finally {
                     this.loading = false;
                 }
             },
 
-            // --- FUNCIÓN AUXILIAR PARA ORDENAR RACKS NUMÉRICAMENTE ---
             getSortedRacks(racksObj) {
                 if (!racksObj) return [];
                 return Object.entries(racksObj)
-                    .sort((a, b) => {
-                        // Ordenar numéricamente las claves (ej: "1" vs "10")
-                        return parseInt(a[0], 10) - parseInt(b[0], 10);
-                    })
-                    .map(([key, value]) => ({ ...value, key: key })); // Devolver como array de objetos con la clave
+                    .sort((a, b) => parseInt(a[0], 10) - parseInt(b[0], 10))
+                    .map(([key, value]) => ({ ...value, key: key }));
             },
 
-            // --- GENERACIÓN MASIVA (SIMPLIFICADA) ---
             openGeneratorModal() {
-                this.genForm.type = document.querySelector('select option:nth-child(2)')?.value || '';
+                // Seleccionar primer tipo de bin por defecto si no hay uno seleccionado
+                if(!this.genForm.type) {
+                    const firstOption = document.querySelector('select[x-model="genForm.type"] option:nth-child(2)');
+                    if(firstOption) this.genForm.type = firstOption.value;
+                }
                 this.genForm.bins = 3;
                 this.showGeneratorModal = true;
             },
 
             async generateStructure() {
-                if(!confirm('Esto generará/reiniciará la estructura base. ¿Continuar?')) return;
+                if(!confirm('ATENCIÓN: Esto generará o sobrescribirá la estructura base de la bodega. ¿Continuar?')) return;
 
                 this.submitting = true;
                 
-                // Construimos la configuración por defecto para todos los niveles
                 const defaultLevelConfigs = [];
-                for(let i=1; i <= this.whConfig.levels; i++) {
+                // Usamos whConfig.levels para generar todos los niveles
+                const maxLevels = this.whConfig.levels > 0 ? this.whConfig.levels : 1;
+
+                for(let i=1; i <= maxLevels; i++) {
                     defaultLevelConfigs.push({
                         level: i,
                         bins_count: this.genForm.bins,
@@ -614,6 +623,7 @@
                     });
 
                     if (response.data.success) {
+                        // Usar una notificación más sutil si es posible, sino alert
                         alert(response.data.message);
                         this.showGeneratorModal = false;
                         this.loadMapData();
@@ -625,7 +635,6 @@
                 }
             },
 
-            // --- EDICIÓN INDIVIDUAL DE RACK ---
             async openRackEditor(aisle, side, rack) {
                 this.editingRack = { active: true, aisle, side, rack, levelConfigs: [] };
                 
@@ -637,13 +646,22 @@
                     if(res.data.status === 'success' && res.data.levels.length > 0) {
                         this.editingRack.levelConfigs = res.data.levels;
                     } else {
-                        // Si está vacío (no debería si se generó), fallback a defaults
-                        const defaultType = this.genForm.type || document.querySelector('select option:nth-child(2)')?.value;
-                        for(let i=1; i <= this.whConfig.levels; i++) {
-                            this.editingRack.levelConfigs.push({ level: i, bins_count: 1, bin_type_id: defaultType });
+                        // Fallback: crear configuración vacía basada en niveles de la bodega
+                        const defaultType = this.genForm.type || document.querySelector('select[x-model="genForm.type"] option:nth-child(2)')?.value;
+                        const maxLevels = this.whConfig.levels > 0 ? this.whConfig.levels : 1;
+                        
+                        for(let i=1; i <= maxLevels; i++) {
+                            this.editingRack.levelConfigs.push({ 
+                                level: i, 
+                                bins_count: 1, 
+                                bin_type_id: defaultType 
+                            });
                         }
                     }
-                } catch(e) { console.error(e); }
+                } catch(e) { 
+                    console.error(e);
+                    alert("Error al cargar detalles del rack.");
+                }
             },
 
             async saveSingleRack() {
@@ -658,53 +676,95 @@
                     });
 
                     if (response.data.success) {
-                        alert('Rack actualizado.');
+                        // alert('Rack actualizado correctamente.'); // Opcional: quitar para agilizar
                         this.editingRack.active = false;
-                        this.loadMapData(); // Refrescar el mapa para ver cambios
+                        this.loadMapData(); 
                     }
-                } catch (error) { alert('Error: ' + (error.response?.data?.message || error.message)); } finally { this.submitting = false; }
+                } catch (error) { 
+                    alert('Error al guardar: ' + (error.response?.data?.message || error.message)); 
+                } finally { 
+                    this.submitting = false; 
+                }
             }
         }));
     });
 
-    // Gestión Vanilla JS (Helpers para los modales de gestión)
-    function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
+    // ==========================================
+    // FUNCIONES GLOBALES (Modales Vanilla JS)
+    // ==========================================
+
+    function closeModal(id) { 
+        document.getElementById(id).classList.add('hidden'); 
+    }
+
     async function loadStates(countryId, selectedStateName = null) { 
         const stateSelect = document.getElementById('branchState');
-        if (!countryId) return;
+        if (!countryId) {
+            stateSelect.innerHTML = '<option value="">Seleccione País</option>';
+            return;
+        }
+        
         stateSelect.innerHTML = '<option>Cargando...</option>';
+        
         try {
-            const res = await fetch(`/portal/states/${countryId}`);
+            // --- CORRECCIÓN CLAVE AQUÍ ---
+            // Usamos la ruta de Admin, no la de Portal Cliente
+            const res = await fetch(`/admin/utils/get-states/${countryId}`);
+            
+            if (!res.ok) throw new Error('Error en red');
+            
             const data = await res.json();
-            stateSelect.innerHTML = '<option>Seleccionar...</option>';
+            stateSelect.innerHTML = '<option value="">Seleccionar...</option>';
+            
+            if (data.length === 0) {
+                stateSelect.innerHTML = '<option value="">Sin estados registrados</option>';
+                // Opcional: Permitir escribir manual si no hay estados
+            }
+
             data.forEach(s => {
                 const opt = document.createElement('option');
                 opt.value = s.name;
                 opt.textContent = s.name;
-                if (selectedStateName && s.name === selectedStateName) opt.selected = true; // FIX: Marcar seleccionado
+                // Marcar seleccionado si estamos editando
+                if (selectedStateName && s.name === selectedStateName) {
+                    opt.selected = true;
+                }
                 stateSelect.appendChild(opt);
             });
-        } catch(e) { stateSelect.innerHTML = '<option>Error</option>'; }
+        } catch(e) { 
+            console.error(e);
+            stateSelect.innerHTML = '<option value="">Error al cargar</option>'; 
+        }
     }
+
     function openBranchModal() { 
         document.getElementById('branchForm').reset();
         document.getElementById('branchMethod').value = 'POST';
         document.getElementById('branchForm').action = "{{ route('admin.branches.store') }}";
         document.getElementById('branchModalTitle').innerText = 'Nueva Sucursal';
+        
+        // Resetear select de estados
+        document.getElementById('branchState').innerHTML = '<option value="">Seleccione País primero</option>';
+        
         document.getElementById('branchModal').classList.remove('hidden'); 
     }
+
     function editBranch(b) { 
         document.getElementById('branchName').value = b.name;
         document.getElementById('branchCode').value = b.code;
         document.getElementById('branchCity').value = b.city;
-        document.getElementById('branchAddress').value = b.address || ''; // FIX: Handle null
+        // Manejo seguro de nulos
+        document.getElementById('branchAddress').value = b.address || ''; 
         document.getElementById('branchZip').value = b.zip || '';
         
-        // FIX: Cargar estados si hay país seleccionado
+        // Seleccionar país
         const countrySelect = document.getElementById('branchCountry');
         countrySelect.value = b.country;
+        
+        // Disparar carga de estados
         const countryOption = Array.from(countrySelect.options).find(o => o.value === b.country);
         if (countryOption) {
+            // Pasamos el 2do argumento para que pre-seleccione el estado
             loadStates(countryOption.dataset.id, b.state);
         }
 
@@ -713,6 +773,7 @@
         document.getElementById('branchModalTitle').innerText = 'Editar Sucursal';
         document.getElementById('branchModal').classList.remove('hidden'); 
     }
+
     function openWarehouseModal(bId) {
         document.getElementById('whForm').reset();
         document.getElementById('modal_branch_id').value = bId;
@@ -721,6 +782,7 @@
         document.getElementById('whModalTitle').innerText = 'Nueva Bodega';
         document.getElementById('warehouseModal').classList.remove('hidden');
     }
+
     function editWarehouse(w) {
         document.getElementById('whName').value = w.name;
         document.getElementById('whCode').value = w.code;
