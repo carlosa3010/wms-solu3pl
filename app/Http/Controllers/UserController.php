@@ -4,12 +4,13 @@ namespace App\Http\Controllers;
 
 use App\Models\User;
 use App\Models\Client;
+use App\Models\Branch; // IMPORTANTE: Importar el modelo Branch
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
-use Illuminate\Support\Facades\Mail; // Importante para enviar correos
-use App\Mail\UserCredentials; // Mailable para credenciales
+use Illuminate\Support\Facades\Mail;
+use App\Mail\UserCredentials;
 
 class UserController extends Controller
 {
@@ -18,12 +19,14 @@ class UserController extends Controller
      */
     public function index()
     {
-        // Traemos todos los usuarios con su cliente (si aplica)
-        $users = User::with('client')->orderBy('created_at', 'desc')->paginate(10);
+        // Traemos todos los usuarios con su cliente y sucursal
+        $users = User::with(['client', 'branch'])->orderBy('created_at', 'desc')->paginate(10);
+        
+        // Datos para los selectores del modal
         $clients = Client::orderBy('company_name')->get();
+        $branches = Branch::where('is_active', true)->orderBy('name')->get(); // NUEVO: Sucursales activas
         
         // LISTA COMPLETA DE MÓDULOS DEL SISTEMA
-        // Agregada sección de infraestructura que faltaba
         $availableModules = [
             'dashboard'      => 'Panel de Control',
             'crm'            => 'CRM & Clientes',
@@ -41,7 +44,7 @@ class UserController extends Controller
             'settings'       => 'Configuración del Sistema'
         ];
 
-        return view('admin.users.index', compact('users', 'clients', 'availableModules'));
+        return view('admin.users.index', compact('users', 'clients', 'branches', 'availableModules'));
     }
 
     /**
@@ -54,6 +57,7 @@ class UserController extends Controller
             'email'     => 'required|email|max:255|unique:users,email',
             'role'      => 'required|in:admin,manager,supervisor,operator,user',
             'client_id' => 'nullable|required_if:role,user|exists:clients,id',
+            'branch_id' => 'nullable|exists:branches,id', // NUEVO: Validación de sucursal
             'status'    => 'required|in:active,inactive',
             'modules'   => 'nullable|array'
         ]);
@@ -66,19 +70,17 @@ class UserController extends Controller
             'password'    => Hash::make($generatedPassword),
             'role'        => $validated['role'],
             'client_id'   => $validated['role'] === 'user' ? $validated['client_id'] : null,
+            'branch_id'   => $validated['branch_id'] ?? null, // NUEVO: Asignar sucursal
             'status'      => $validated['status'],
             'permissions' => $validated['modules'] ?? [], 
         ]);
 
         // Enviar Correo con Credenciales
         try {
-            // isClient true si el rol es 'user' (que mapea a cliente en tu sistema de roles) o 'client'
             $isClient = in_array($user->role, ['user', 'client']);
             Mail::to($user->email)->send(new UserCredentials($user, $generatedPassword, $isClient));
         } catch (\Exception $e) {
-            // Loguear error silenciosamente o notificar en flash message
             \Log::error('SMTP Error al crear usuario: ' . $e->getMessage());
-            // Opcional: Podrías añadir una advertencia al mensaje flash si lo deseas
         }
 
         return redirect()->route('admin.users.index')
@@ -95,6 +97,7 @@ class UserController extends Controller
             'email'     => ['required', 'email', 'max:255', Rule::unique('users')->ignore($user->id)],
             'role'      => 'required|in:admin,manager,supervisor,operator,user',
             'client_id' => 'nullable|required_if:role,user|exists:clients,id',
+            'branch_id' => 'nullable|exists:branches,id', // NUEVO
             'status'    => 'required|in:active,inactive',
             'modules'   => 'nullable|array'
         ]);
@@ -104,6 +107,7 @@ class UserController extends Controller
             'email'       => $validated['email'],
             'role'        => $validated['role'],
             'client_id'   => $validated['role'] === 'user' ? $validated['client_id'] : null,
+            'branch_id'   => $validated['branch_id'] ?? null, // NUEVO
             'status'      => $validated['status'],
             'permissions' => $validated['modules'] ?? [],
         ]);
@@ -136,7 +140,6 @@ class UserController extends Controller
             'password' => Hash::make($newPassword)
         ]);
 
-        // Enviar correo con la nueva contraseña
         try {
             $isClient = in_array($user->role, ['user', 'client']);
             Mail::to($user->email)->send(new UserCredentials($user, $newPassword, $isClient));

@@ -94,9 +94,9 @@
                             <thead class="bg-slate-50/50 text-slate-400 font-bold text-[10px] uppercase border-b border-slate-100">
                                 <tr>
                                     <th class="px-6 py-4 w-1/3">Producto (SKU)</th>
-                                    <th class="px-6 py-4">Bin Origen (Stock)</th>
+                                    <th class="px-6 py-4">Bin Origen (Stock Disponible)</th>
                                     <th class="px-6 py-4 text-center w-24">Cantidad</th>
-                                    <th class="px-6 py-4">Bin Destino</th>
+                                    <th class="px-6 py-4">Bin Destino (Sugerido)</th>
                                     <th class="px-6 py-4 text-right w-16"></th>
                                 </tr>
                             </thead>
@@ -151,7 +151,7 @@
                         <i class="fa-solid fa-triangle-exclamation"></i> Importante
                     </p>
                     <p class="text-[10px] text-amber-700 leading-relaxed uppercase font-medium">
-                        El stock se moverá inmediatamente de la ubicación origen a la destino al confirmar. Asegúrese de que el movimiento físico se realice al mismo tiempo.
+                        Si es Movimiento Interno, el stock se actualizará inmediatamente al confirmar. Si es entre sedes, requiere recepción.
                     </p>
                 </div>
             </div>
@@ -170,16 +170,16 @@
             </select>
         </td>
         <td class="px-6 py-4">
-            <select name="items[INDEX][origin_location_id]" required class="w-full p-2 border border-slate-200 rounded-lg text-xs bg-white outline-none js-from-loc" disabled>
-                <option value="">-- Primero SKU --</option>
+            <select name="items[INDEX][origin_location_id]" class="w-full p-2 border border-slate-200 rounded-lg text-xs bg-white outline-none js-from-loc" disabled>
+                <option value="">-- Seleccionar SKU Primero --</option>
             </select>
         </td>
         <td class="px-6 py-4 text-center">
             <input type="number" name="items[INDEX][quantity]" value="1" min="1" required class="w-full p-2 border border-slate-200 rounded-lg text-xs text-center font-bold js-qty" oninput="updateSummary()">
         </td>
         <td class="px-6 py-4">
-            <select name="items[INDEX][destination_location_id]" required class="w-full p-2 border border-slate-200 rounded-lg text-xs bg-white outline-none js-to-loc">
-                <option value="">-- Cargando --</option>
+            <select name="items[INDEX][target_location_id]" class="w-full p-2 border border-slate-200 rounded-lg text-xs bg-white outline-none js-to-loc">
+                <option value="">-- Auto Asignar --</option>
             </select>
         </td>
         <td class="px-6 py-4 text-right">
@@ -223,40 +223,50 @@
 
         const selectedOption = branchSelect.options[branchSelect.selectedIndex];
         
-        // Obtener data del atributo data-warehouses
         if (selectedOption.value) {
-            const warehouses = JSON.parse(selectedOption.getAttribute('data-warehouses'));
-            
-            if (warehouses && warehouses.length > 0) {
-                warehouses.forEach(wh => {
-                    warehouseSelect.innerHTML += `<option value="${wh.id}">${wh.name}</option>`;
-                });
-                warehouseSelect.disabled = false;
+            // Extraer JSON del atributo data-warehouses
+            const warehousesRaw = selectedOption.getAttribute('data-warehouses');
+            if (warehousesRaw) {
+                const warehouses = JSON.parse(warehousesRaw);
                 
-                // Auto-seleccionar si solo hay una
-                if(warehouses.length === 1) {
-                    warehouseSelect.selectedIndex = 1;
-                    checkFormReady();
+                if (warehouses && warehouses.length > 0) {
+                    warehouses.forEach(wh => {
+                        warehouseSelect.innerHTML += `<option value="${wh.id}">${wh.name}</option>`;
+                    });
+                    warehouseSelect.disabled = false;
+                    
+                    // Auto-seleccionar si solo hay una
+                    if(warehouses.length === 1) {
+                        warehouseSelect.selectedIndex = 1;
+                        checkFormReady(); // Re-validar
+                    }
+                } else {
+                    warehouseSelect.innerHTML = '<option value="">Sin bodegas</option>';
                 }
-            } else {
-                warehouseSelect.innerHTML = '<option value="">Sin bodegas</option>';
             }
         }
     }
 
     function checkFormReady() {
         const src = srcWhSelect.value;
-        const dest = destWhSelect.value;
+        const dest = destWhSelect.value; // Puede ser null si aún no se carga, cuidado
         
-        // Habilitar botón de agregar si tenemos origen y destino
-        if (src && dest) {
+        // Habilitar botón si hay origen seleccionado (destino es opcional para empezar a cargar productos, pero obligatorio para guardar)
+        // Para simplificar, pedimos ambos.
+        const hasSrc = src && src !== "";
+        const hasDest = destWhSelect.options.length > 1 ? (dest && dest !== "") : true; // Si está cargando, esperar
+
+        if (hasSrc) {
             addBtn.disabled = false;
             addBtn.classList.remove('bg-slate-300', 'cursor-not-allowed');
             addBtn.classList.add('bg-custom-primary', 'hover:brightness-110');
             
             // Actualizar etiqueta de tipo
             const label = document.getElementById('transfer_type_label');
-            if (src === dest) {
+            
+            // Comparar sucursales, no bodegas, para determinar el tipo Logístico vs Interno
+            // Aunque si es misma bodega es Interno 100%.
+            if (srcBranch.value === destBranch.value) {
                 label.innerText = "MOVIMIENTO INTERNO";
                 label.className = "text-blue-400 font-black uppercase text-[9px]";
             } else {
@@ -274,8 +284,8 @@
         const srcWhId = srcWhSelect.value;
         const destWhId = destWhSelect.value;
 
-        if(!srcWhId || !destWhId) {
-            alert("Seleccione las bodegas de origen y destino primero.");
+        if(!srcWhId) {
+            alert("Seleccione la bodega de origen primero.");
             return;
         }
 
@@ -293,10 +303,13 @@
         
         // Inicializar fila
         const productSelect = row.querySelector('.js-product-select');
+        const fromSelect = row.querySelector('.js-from-loc');
         const destLocSelect = row.querySelector('.js-to-loc');
 
-        // Cargar bines de destino (todos los de la bodega destino)
-        loadDestinationBins(destWhId, destLocSelect);
+        // Cargar bines de destino (si hay bodega destino seleccionada)
+        if (destWhId) {
+            loadDestinationBins(destWhId, destLocSelect);
+        }
 
         // Evento al seleccionar producto
         productSelect.addEventListener('change', function() {
@@ -322,7 +335,7 @@
         fetch(`{{ url('admin/inventory/get-bins') }}?warehouse_id=${warehouseId}`)
             .then(res => res.json())
             .then(data => {
-                selectElement.innerHTML = '<option value="">-- Seleccionar --</option>';
+                selectElement.innerHTML = '<option value="">-- Auto Asignar --</option>';
                 data.forEach(loc => {
                     selectElement.innerHTML += `<option value="${loc.id}">${loc.code}</option>`;
                 });
@@ -345,19 +358,27 @@
         if (!productId) return;
 
         // AJAX para traer stock real disponible
+        // Endpoint: /admin/inventory/get-sources?product_id=X&warehouse_id=Y
         fetch(`{{ url('admin/inventory/get-sources') }}?product_id=${productId}&warehouse_id=${warehouseId}`)
             .then(res => res.json())
             .then(data => {
                 if (data.length === 0) {
                     fromSelect.innerHTML = '<option value="">SIN STOCK</option>';
-                    alert("Este producto no tiene stock en la bodega de origen seleccionada.");
+                    // Opcional: alert("Este producto no tiene stock en la bodega de origen seleccionada.");
                 } else {
                     fromSelect.innerHTML = '<option value="">-- Seleccionar Bin --</option>';
                     data.forEach(item => {
                         // El controlador devuelve { id, code, quantity, text }
+                        // text suele ser "BIN-01 (Qty: 50)"
                         fromSelect.innerHTML += `<option value="${item.id}" data-max="${item.quantity}">${item.text}</option>`;
                     });
                     fromSelect.disabled = false;
+                    
+                    // Auto-seleccionar si solo hay uno
+                    if(data.length === 1) {
+                        fromSelect.selectedIndex = 1;
+                        fromSelect.dispatchEvent(new Event('change'));
+                    }
                 }
             })
             .catch(err => {
@@ -371,6 +392,7 @@
             const max = opt.getAttribute('data-max');
             if (max) {
                 qtyInput.max = max;
+                qtyInput.title = `Máximo disponible: ${max}`;
                 if (parseInt(qtyInput.value) > parseInt(max)) qtyInput.value = max;
             }
         };
